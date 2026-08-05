@@ -1,0 +1,35 @@
+﻿# Environment variables and credentials
+.env
+.streamlit/secrets.toml
+
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.class
+
+# Test and development caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Generated exports and backups
+exports/*
+!exports/.gitkeep
+
+backups/*
+!backups/.gitkeep
+
+# Logs
+*.log
+
+# Windows files
+Thumbs.db
+Desktop.ini
