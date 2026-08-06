@@ -295,3 +295,76 @@ def fetch_latest_barangay_updates_for_event(
     )
 
     return session.execute(statement).mappings().all()
+def fetch_barangay_validation_queue(
+    session: Session,
+    *,
+    event_id: int,
+):
+    """
+    Retrieve reports awaiting validation for one event.
+    """
+    statement = (
+        select(
+            BarangayUpdate.id,
+            BarangayUpdate.event_id,
+            BarangayUpdate.barangay_id,
+            Barangay.name.label("barangay_name"),
+            Barangay.psgc_code.label("psgc_code"),
+            BarangayUpdate.situation_status,
+            BarangayUpdate.affected_families,
+            BarangayUpdate.affected_individuals,
+            BarangayUpdate.inside_ec_families,
+            BarangayUpdate.inside_ec_individuals,
+            BarangayUpdate.outside_ec_families,
+            BarangayUpdate.outside_ec_individuals,
+            BarangayUpdate.flood_status,
+            BarangayUpdate.flood_depth_cm,
+            BarangayUpdate.road_status,
+            BarangayUpdate.power_status,
+            BarangayUpdate.water_status,
+            BarangayUpdate.rescue_requests,
+            BarangayUpdate.source,
+            BarangayUpdate.validation_status,
+            BarangayUpdate.remarks,
+            BarangayUpdate.recorded_at,
+        )
+        .join(
+            Barangay,
+            Barangay.id == BarangayUpdate.barangay_id,
+        )
+        .where(
+            BarangayUpdate.event_id == event_id,
+            BarangayUpdate.validation_status.in_(
+                (
+                    "Submitted",
+                    "For Validation",
+                )
+            ),
+        )
+        .order_by(
+            BarangayUpdate.recorded_at.desc(),
+            BarangayUpdate.id.desc(),
+        )
+    )
+
+    return session.execute(statement).mappings().all()
+
+
+def fetch_barangay_update_for_review(
+    session: Session,
+    *,
+    update_id: int,
+) -> BarangayUpdate | None:
+    """
+    Retrieve and lock one barangay update while it is
+    being reviewed.
+    """
+    statement = (
+        select(BarangayUpdate)
+        .where(
+            BarangayUpdate.id == update_id
+        )
+        .with_for_update()
+    )
+
+    return session.scalar(statement)

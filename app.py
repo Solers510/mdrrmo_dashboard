@@ -25,6 +25,10 @@ pages = {
             title="Barangay Updates",
         ),
         st.Page(
+            "pages/validation.py",
+            title="Report Validation",
+        ),
+        st.Page(
             "pages/evacuation_centers.py",
             title="Evacuation Centers",
         ),

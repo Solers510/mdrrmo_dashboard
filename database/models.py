@@ -452,6 +452,20 @@ class BarangayUpdate(Base):
         default="Submitted",
         server_default="Submitted",
     )
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
+    review_notes: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     remarks: Mapped[str | None] = mapped_column(
         Text,
