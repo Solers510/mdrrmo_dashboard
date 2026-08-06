@@ -71,3 +71,27 @@ UTILITY_STATUSES = (
     "Partial",
     "Interrupted",
 )
+EVACUATION_CENTER_STATUSES = (
+    "Standby",
+    "Open",
+    "Full",
+    "Over Capacity",
+    "Closed",
+)
+
+
+SUPPLY_STATUSES = (
+    "Unknown",
+    "Sufficient",
+    "Low",
+    "Critical",
+    "Unavailable",
+)
+
+
+ELECTRICITY_STATUSES = (
+    "Unknown",
+    "Available",
+    "Partial",
+    "Unavailable",
+)

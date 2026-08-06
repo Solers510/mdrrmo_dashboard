@@ -7,6 +7,7 @@ from database.repositories import (
     fetch_active_barangays,
     fetch_active_event_rows,
     fetch_latest_barangay_updates_for_event,
+    fetch_latest_evacuation_updates_for_event,
 )
 
 
@@ -45,14 +46,13 @@ def _build_summary(
     usable_statuses: set[str],
 ) -> dict[str, object]:
     """
-    Calculate dashboard totals using only usable rows.
+    Calculate barangay dashboard totals using only
+    records with allowed validation statuses.
     """
-
     usable_rows = [
         row
         for row in rows
-        if str(row["validation_status"])
-        in usable_statuses
+        if str(row["validation_status"]) in usable_statuses
     ]
 
     affected_statuses = {
@@ -63,8 +63,7 @@ def _build_summary(
     affected_barangays = sum(
         1
         for row in usable_rows
-        if row["situation_status"]
-        in affected_statuses
+        if row["situation_status"] in affected_statuses
     )
 
     affected_families = sum(
@@ -123,11 +122,8 @@ def _build_summary(
     needs_correction = sum(
         1
         for row in rows
-        if row["validation_status"]
-        == "Needs Correction"
+        if row["validation_status"] == "Needs Correction"
     )
-
-    latest_update: datetime | None = None
 
     timestamps = [
         row["recorded_at"]
@@ -135,8 +131,11 @@ def _build_summary(
         if row["recorded_at"] is not None
     ]
 
-    if timestamps:
-        latest_update = max(timestamps)
+    latest_update: datetime | None = (
+        max(timestamps)
+        if timestamps
+        else None
+    )
 
     reports_received = len(rows)
 
@@ -153,9 +152,7 @@ def _build_summary(
         "inside_ec_individuals": inside_ec_individuals,
         "outside_ec_families": outside_ec_families,
         "outside_ec_individuals": outside_ec_individuals,
-        "pending_rescue_requests": (
-            pending_rescue_requests
-        ),
+        "pending_rescue_requests": pending_rescue_requests,
         "impassable_roads": impassable_roads,
         "interrupted_power": interrupted_power,
         "interrupted_water": interrupted_water,
@@ -168,22 +165,141 @@ def _build_summary(
     }
 
 
+def _build_evacuation_summary(
+    *,
+    rows: list[dict[str, object]],
+    usable_statuses: set[str],
+) -> dict[str, object]:
+    """
+    Calculate current evacuation-center totals using only
+    records with allowed validation statuses.
+    """
+    usable_rows = [
+        row
+        for row in rows
+        if str(row["validation_status"]) in usable_statuses
+    ]
+
+    operational_statuses = {
+        "Open",
+        "Full",
+        "Over Capacity",
+    }
+
+    open_centers = sum(
+        1
+        for row in usable_rows
+        if row["status"] in operational_statuses
+    )
+
+    families = sum(
+        _safe_int(row["families"])
+        for row in usable_rows
+    )
+
+    individuals = sum(
+        _safe_int(row["individuals"])
+        for row in usable_rows
+    )
+
+    children = sum(
+        _safe_int(row["children"])
+        for row in usable_rows
+    )
+
+    senior_citizens = sum(
+        _safe_int(row["senior_citizens"])
+        for row in usable_rows
+    )
+
+    pwd = sum(
+        _safe_int(row["pwd"])
+        for row in usable_rows
+    )
+
+    pregnant_women = sum(
+        _safe_int(row["pregnant_women"])
+        for row in usable_rows
+    )
+
+    medical_cases = sum(
+        _safe_int(row["medical_cases"])
+        for row in usable_rows
+    )
+
+    critical_food = sum(
+        1
+        for row in usable_rows
+        if row["food_status"] in {
+            "Critical",
+            "Unavailable",
+        }
+    )
+
+    critical_water = sum(
+        1
+        for row in usable_rows
+        if row["water_status"] in {
+            "Critical",
+            "Unavailable",
+        }
+    )
+
+    unavailable_electricity = sum(
+        1
+        for row in usable_rows
+        if row["electricity_status"] == "Unavailable"
+    )
+
+    needs_correction = sum(
+        1
+        for row in rows
+        if row["validation_status"] == "Needs Correction"
+    )
+
+    timestamps = [
+        row["recorded_at"]
+        for row in rows
+        if row["recorded_at"] is not None
+    ]
+
+    latest_update: datetime | None = (
+        max(timestamps)
+        if timestamps
+        else None
+    )
+
+    return {
+        "open_centers": open_centers,
+        "families": families,
+        "individuals": individuals,
+        "children": children,
+        "senior_citizens": senior_citizens,
+        "pwd": pwd,
+        "pregnant_women": pregnant_women,
+        "medical_cases": medical_cases,
+        "critical_food": critical_food,
+        "critical_water": critical_water,
+        "unavailable_electricity": unavailable_electricity,
+        "reports_received": len(rows),
+        "reports_included": len(usable_rows),
+        "needs_correction": needs_correction,
+        "latest_update": latest_update,
+    }
+
+
 def get_dashboard_bundle() -> dict[str, object]:
     """
-    Retrieve the active event and calculate both provisional
-    and validated dashboard summaries.
+    Retrieve the active event and calculate provisional
+    and validated barangay and evacuation-center summaries.
     """
-
     try:
         with SessionLocal() as session:
-            active_events = fetch_active_event_rows(
-                session
-            )
+            active_events = fetch_active_event_rows(session)
 
             if len(active_events) > 1:
                 raise DashboardDataIntegrityError(
-                    "More than one active disaster event "
-                    "exists."
+                    "More than one active disaster event exists."
                 )
 
             if not active_events:
@@ -193,74 +309,105 @@ def get_dashboard_bundle() -> dict[str, object]:
                     "official_summary": None,
                     "provisional_rows": [],
                     "official_rows": [],
+                    "provisional_evacuation_summary": None,
+                    "official_evacuation_summary": None,
+                    "provisional_evacuation_rows": [],
+                    "official_evacuation_rows": [],
                 }
 
-            active_event = dict(
-                active_events[0]
-            )
+            active_event = dict(active_events[0])
+            event_id = int(active_event["id"])
 
-            event_id = int(
-                active_event["id"]
-            )
+            barangays = fetch_active_barangays(session)
+            total_barangays = len(barangays)
 
-            barangays = fetch_active_barangays(
-                session
-            )
+            # -------------------------------------------------
+            # BARANGAY REPORTS
+            # -------------------------------------------------
 
-            total_barangays = len(
-                barangays
-            )
-
-            # Latest record regardless of validation status.
             latest_all_rows = [
                 dict(row)
-                for row in (
-                    fetch_latest_barangay_updates_for_event(
-                        session,
-                        event_id=event_id,
-                    )
+                for row in fetch_latest_barangay_updates_for_event(
+                    session,
+                    event_id=event_id,
                 )
             ]
 
-            # Latest validated record for each barangay.
             latest_validated_rows = [
                 dict(row)
-                for row in (
-                    fetch_latest_barangay_updates_for_event(
-                        session,
-                        event_id=event_id,
-                        included_statuses=(
-                            "Validated",
-                        ),
-                    )
+                for row in fetch_latest_barangay_updates_for_event(
+                    session,
+                    event_id=event_id,
+                    included_statuses=("Validated",),
                 )
             ]
 
             provisional_summary = _build_summary(
                 rows=latest_all_rows,
                 total_barangays=total_barangays,
-                usable_statuses=(
-                    PROVISIONAL_USABLE_STATUSES
-                ),
+                usable_statuses=PROVISIONAL_USABLE_STATUSES,
             )
 
             official_summary = _build_summary(
                 rows=latest_validated_rows,
                 total_barangays=total_barangays,
-                usable_statuses={
-                    "Validated",
-                },
+                usable_statuses={"Validated"},
+            )
+
+            # -------------------------------------------------
+            # EVACUATION-CENTER REPORTS
+            # -------------------------------------------------
+
+            latest_evacuation_rows = [
+                dict(row)
+                for row in fetch_latest_evacuation_updates_for_event(
+                    session,
+                    event_id=event_id,
+                )
+            ]
+
+            latest_validated_evacuation_rows = [
+                dict(row)
+                for row in fetch_latest_evacuation_updates_for_event(
+                    session,
+                    event_id=event_id,
+                    included_statuses=("Validated",),
+                )
+            ]
+
+            provisional_evacuation_summary = (
+                _build_evacuation_summary(
+                    rows=latest_evacuation_rows,
+                    usable_statuses=PROVISIONAL_USABLE_STATUSES,
+                )
+            )
+
+            official_evacuation_summary = (
+                _build_evacuation_summary(
+                    rows=latest_validated_evacuation_rows,
+                    usable_statuses={"Validated"},
+                )
             )
 
             return {
                 "active_event": active_event,
-                "provisional_summary": (
-                    provisional_summary
-                ),
+
+                "provisional_summary": provisional_summary,
                 "official_summary": official_summary,
                 "provisional_rows": latest_all_rows,
-                "official_rows": (
-                    latest_validated_rows
+                "official_rows": latest_validated_rows,
+
+                "provisional_evacuation_summary": (
+                    provisional_evacuation_summary
+                ),
+                "official_evacuation_summary": (
+                    official_evacuation_summary
+                ),
+                "provisional_evacuation_rows": (
+                    latest_evacuation_rows
+                ),
+                "official_evacuation_rows": (
+                    latest_validated_evacuation_rows
                 ),
             }
 

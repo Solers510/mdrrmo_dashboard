@@ -3,6 +3,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from services.dashboard_service import (
@@ -13,6 +14,12 @@ from services.dashboard_service import (
 
 
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
+
+PROVISIONAL_INCLUDED_STATUSES = {
+    "Submitted",
+    "For Validation",
+    "Validated",
+}
 
 
 ALERT_STYLES = {
@@ -102,7 +109,7 @@ def render_summary_cards(
     summary: dict[str, object],
 ) -> None:
     """
-    Render the primary dashboard figures.
+    Render the primary barangay dashboard figures.
     """
     row_1 = st.columns(4)
 
@@ -127,11 +134,7 @@ def render_summary_cards(
     with row_1[3]:
         st.metric(
             "Pending Rescue Requests",
-            int(
-                summary[
-                    "pending_rescue_requests"
-                ]
-            ),
+            int(summary["pending_rescue_requests"]),
         )
 
     row_2 = st.columns(4)
@@ -166,19 +169,34 @@ def render_summary_cards(
         )
 
 
+def record_is_included(
+    record: dict[str, object],
+    *,
+    view_mode: str,
+) -> bool:
+    """
+    Determine whether a record contributes to the selected
+    dashboard mode.
+    """
+    validation_status = str(
+        record["validation_status"]
+    )
+
+    if view_mode == "Official Validated":
+        return validation_status == "Validated"
+
+    return validation_status in PROVISIONAL_INCLUDED_STATUSES
+
+
 st.title("MDRRMO Naic Situation Dashboard")
 
 st.caption(
     "Current operational figures derived from the latest "
-    "barangay report for each barangay."
+    "barangay and evacuation-center reports."
 )
 
 
-refresh_clicked = st.button(
-    "Refresh Dashboard",
-)
-
-if refresh_clicked:
+if st.button("Refresh Dashboard"):
     st.rerun()
 
 
@@ -237,14 +255,28 @@ if view_mode == "Provisional Operational":
     summary = dashboard["provisional_summary"]
     selected_rows = dashboard["provisional_rows"]
 
+    evacuation_summary = dashboard[
+        "provisional_evacuation_summary"
+    ]
+    evacuation_rows = dashboard[
+        "provisional_evacuation_rows"
+    ]
+
     st.warning(
-        "This view includes submitted reports that may "
-        "not yet have completed formal validation."
+        "This view includes submitted operational reports "
+        "that may not yet have completed formal validation."
     )
 
 else:
     summary = dashboard["official_summary"]
     selected_rows = dashboard["official_rows"]
+
+    evacuation_summary = dashboard[
+        "official_evacuation_summary"
+    ]
+    evacuation_rows = dashboard[
+        "official_evacuation_rows"
+    ]
 
     st.success(
         "This view uses only records marked Validated."
@@ -253,9 +285,34 @@ else:
 
 if summary is None:
     st.info(
-        "No dashboard summary is currently available."
+        "No barangay dashboard summary is currently available."
     )
     st.stop()
+
+if evacuation_summary is None:
+    st.info(
+        "No evacuation-center summary is currently available."
+    )
+    st.stop()
+
+
+included_barangay_rows = [
+    record
+    for record in selected_rows
+    if record_is_included(
+        record,
+        view_mode=view_mode,
+    )
+]
+
+included_evacuation_rows = [
+    record
+    for record in evacuation_rows
+    if record_is_included(
+        record,
+        view_mode=view_mode,
+    )
+]
 
 
 render_summary_cards(summary)
@@ -298,10 +355,8 @@ with coverage_columns[3]:
 
 
 st.write(
-    "**Latest report timestamp:**",
-    format_datetime(
-        summary["latest_update"]
-    ),
+    "**Latest barangay report timestamp:**",
+    format_datetime(summary["latest_update"]),
 )
 
 
@@ -317,9 +372,8 @@ st.subheader("Latest Barangay Situation")
 if not selected_rows:
     if view_mode == "Official Validated":
         st.info(
-            "No validated barangay reports are available. "
-            "This is expected until a validation workflow "
-            "has been implemented."
+            "No validated barangay reports are available "
+            "for the active event."
         )
     else:
         st.info(
@@ -334,9 +388,7 @@ else:
         table_rows.append(
             {
                 "Barangay": record["barangay_name"],
-                "Situation": (
-                    record["situation_status"]
-                ),
+                "Situation": record["situation_status"],
                 "Affected Families": (
                     record["affected_families"]
                 ),
@@ -369,9 +421,7 @@ else:
             }
         )
 
-    dataframe = pd.DataFrame(
-        table_rows
-    )
+    dataframe = pd.DataFrame(table_rows)
 
     st.dataframe(
         dataframe,
@@ -389,41 +439,58 @@ st.divider()
 
 st.subheader("Affected Individuals by Barangay")
 
-if not selected_rows:
+affected_chart_rows = [
+    {
+        "Barangay": record["barangay_name"],
+        "Affected Individuals": int(
+            record["affected_individuals"]
+        ),
+    }
+    for record in included_barangay_rows
+    if int(record["affected_individuals"]) > 0
+]
+
+if not affected_chart_rows:
     st.info(
-        "No barangay data is available for this chart."
+        "No affected individuals are currently reported "
+        "in this dashboard mode."
     )
 
 else:
-    chart_rows = [
-        {
-            "Barangay": record["barangay_name"],
-            "Affected Individuals": int(
-                record["affected_individuals"]
-            ),
-        }
-        for record in selected_rows
-        if int(
-            record["affected_individuals"]
-        ) > 0
-    ]
-
-    if not chart_rows:
-        st.info(
-            "No affected individuals are currently "
-            "reported in this view."
+    affected_dataframe = (
+        pd.DataFrame(affected_chart_rows)
+        .sort_values(
+            "Affected Individuals",
+            ascending=False,
         )
-
-    else:
-        chart_dataframe = (
-            pd.DataFrame(chart_rows)
-            .set_index("Barangay")
+        .head(10)
+        .sort_values(
+            "Affected Individuals",
+            ascending=True,
         )
+    )
 
-        st.bar_chart(
-            chart_dataframe,
-            use_container_width=True,
-        )
+    affected_figure = px.bar(
+        affected_dataframe,
+        x="Affected Individuals",
+        y="Barangay",
+        orientation="h",
+        text="Affected Individuals",
+        title=(
+            "Top barangays by latest reported "
+            "affected individuals"
+        ),
+    )
+
+    affected_figure.update_layout(
+        xaxis_title="Affected individuals",
+        yaxis_title="Barangay",
+    )
+
+    st.plotly_chart(
+        affected_figure,
+        use_container_width=True,
+    )
 
 
 st.divider()
@@ -453,4 +520,192 @@ with interruption_columns[2]:
     st.metric(
         "Water Interrupted",
         int(summary["interrupted_water"]),
+    )
+
+
+st.divider()
+
+
+# ---------------------------------------------------------
+# EVACUATION-CENTER SUMMARY
+# ---------------------------------------------------------
+
+st.subheader("Evacuation Center Summary")
+
+evacuation_columns = st.columns(4)
+
+with evacuation_columns[0]:
+    st.metric(
+        "Open Centers",
+        int(evacuation_summary["open_centers"]),
+    )
+
+with evacuation_columns[1]:
+    st.metric(
+        "Registered Families",
+        f"{int(evacuation_summary['families']):,}",
+    )
+
+with evacuation_columns[2]:
+    st.metric(
+        "Registered Individuals",
+        f"{int(evacuation_summary['individuals']):,}",
+    )
+
+with evacuation_columns[3]:
+    st.metric(
+        "Critical Water Supply",
+        int(evacuation_summary["critical_water"]),
+    )
+
+
+evacuation_condition_columns = st.columns(4)
+
+with evacuation_condition_columns[0]:
+    st.metric(
+        "Critical Food Supply",
+        int(evacuation_summary["critical_food"]),
+    )
+
+with evacuation_condition_columns[1]:
+    st.metric(
+        "No Electricity",
+        int(
+            evacuation_summary[
+                "unavailable_electricity"
+            ]
+        ),
+    )
+
+with evacuation_condition_columns[2]:
+    st.metric(
+        "Medical Cases",
+        int(evacuation_summary["medical_cases"]),
+    )
+
+with evacuation_condition_columns[3]:
+    st.metric(
+        "Reports Included",
+        int(evacuation_summary["reports_included"]),
+    )
+
+
+st.write(
+    "**Latest evacuation-center report timestamp:**",
+    format_datetime(
+        evacuation_summary["latest_update"]
+    ),
+)
+
+
+st.divider()
+
+
+# ---------------------------------------------------------
+# EVACUATION-CENTER OCCUPANCY CHART
+# ---------------------------------------------------------
+
+st.subheader("Current Occupants by Evacuation Center")
+
+evacuation_chart_rows = [
+    {
+        "Evacuation Center": record["center_name"],
+        "Individuals": int(record["individuals"]),
+    }
+    for record in included_evacuation_rows
+    if int(record["individuals"]) > 0
+]
+
+if not evacuation_chart_rows:
+    st.info(
+        "No evacuation-center occupants are currently "
+        "reported in this dashboard mode."
+    )
+
+else:
+    evacuation_dataframe = (
+        pd.DataFrame(evacuation_chart_rows)
+        .sort_values(
+            "Individuals",
+            ascending=True,
+        )
+    )
+
+    evacuation_figure = px.bar(
+        evacuation_dataframe,
+        x="Individuals",
+        y="Evacuation Center",
+        orientation="h",
+        text="Individuals",
+        title=(
+            "Latest reported individuals "
+            "by evacuation center"
+        ),
+    )
+
+    evacuation_figure.update_layout(
+        xaxis_title="Individuals",
+        yaxis_title="Evacuation center",
+    )
+
+    st.plotly_chart(
+        evacuation_figure,
+        use_container_width=True,
+    )
+
+
+st.divider()
+
+
+# ---------------------------------------------------------
+# BARANGAY / EVACUATION-CENTER RECONCILIATION
+# ---------------------------------------------------------
+
+st.subheader("Evacuation Data Reconciliation")
+
+barangay_inside_ec = int(
+    summary["inside_ec_individuals"]
+)
+
+center_registered = int(
+    evacuation_summary["individuals"]
+)
+
+difference = (
+    center_registered
+    - barangay_inside_ec
+)
+
+reconciliation_columns = st.columns(3)
+
+with reconciliation_columns[0]:
+    st.metric(
+        "Barangay-Reported Inside EC",
+        f"{barangay_inside_ec:,}",
+    )
+
+with reconciliation_columns[1]:
+    st.metric(
+        "Center-Registered Individuals",
+        f"{center_registered:,}",
+    )
+
+with reconciliation_columns[2]:
+    st.metric(
+        "Difference",
+        f"{difference:+,}",
+    )
+
+
+if difference != 0:
+    st.info(
+        "A difference does not automatically indicate an "
+        "error. Reporting times and responsible offices may "
+        "differ. Reconcile the figures before official "
+        "publication."
+    )
+else:
+    st.success(
+        "The current barangay and evacuation-center totals "
+        "match in this dashboard mode."
     )
