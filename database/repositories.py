@@ -7,7 +7,8 @@ from database.models import (
     BarangayUpdate,
     DisasterEvent,
     EvacuationCenter,
-    EvacuationCenterUpdate,AppUser
+    EvacuationCenterUpdate,
+    AppUser,
 )
 def fetch_active_event_rows(session: Session):
     """
@@ -83,6 +84,8 @@ def fetch_alert_level_by_code(
     )
 
     return session.scalar(statement)
+
+
 def fetch_active_barangays(session: Session):
     """
     Return all active Naic barangays alphabetically.
@@ -102,6 +105,8 @@ def fetch_active_barangays(session: Session):
     )
 
     return session.execute(statement).mappings().all()
+
+
 def fetch_barangay_by_id(
     session: Session,
     barangay_id: int,
@@ -165,6 +170,8 @@ def fetch_recent_barangay_updates(
     )
 
     return session.execute(statement).mappings().all()
+
+
 def fetch_latest_barangay_updates_for_event(
     session: Session,
     *,
@@ -297,6 +304,8 @@ def fetch_latest_barangay_updates_for_event(
     )
 
     return session.execute(statement).mappings().all()
+
+
 def fetch_barangay_validation_queue(
     session: Session,
     *,
@@ -370,6 +379,8 @@ def fetch_barangay_update_for_review(
     )
 
     return session.scalar(statement)
+
+
 def fetch_active_evacuation_centers(
     session: Session,
 ):
@@ -493,6 +504,8 @@ def fetch_recent_evacuation_center_updates(
     )
 
     return session.execute(statement).mappings().all()
+
+
 def fetch_latest_evacuation_updates_for_event(
     session: Session,
     *,
@@ -627,6 +640,8 @@ def fetch_latest_evacuation_updates_for_event(
     )
 
     return session.execute(statement).mappings().all()
+
+
 def fetch_app_user_by_email(
     session: Session,
     *,
@@ -658,6 +673,8 @@ def fetch_app_user_by_id(
     )
 
     return session.scalar(statement)
+
+
 def fetch_all_app_users(
     session: Session,
 ):

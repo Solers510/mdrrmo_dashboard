@@ -28,12 +28,18 @@ from config.access_control import (
     PERMISSION_MANAGE_EVACUATION_CENTERS,
     PERMISSION_SUBMIT_EVACUATION_UPDATES,
 )
-from utils.auth import require_any_permission
+from utils.auth import has_permission, require_any_permission
 
 
 current_user = require_any_permission(
     PERMISSION_MANAGE_EVACUATION_CENTERS,
     PERMISSION_SUBMIT_EVACUATION_UPDATES,
+)
+
+
+can_manage_centers = has_permission(
+    current_user,
+    PERMISSION_MANAGE_EVACUATION_CENTERS,
 )
 
 st.title("Evacuation Center Monitoring")
@@ -138,6 +144,14 @@ manage_tab, update_tab, history_tab = st.tabs(
 with manage_tab:
     st.subheader("Add Evacuation Center")
 
+    if not can_manage_centers:
+        st.warning(
+            "Your role may submit evacuation-center "
+            "updates, but only authorized operations "
+            "staff can create evacuation-center "
+            "master records."
+        )
+
     st.info(
         "Use only official evacuation-center names and "
         "capacity values supplied by the responsible office."
@@ -180,10 +194,17 @@ with manage_tab:
             "Add Evacuation Center",
             type="primary",
             use_container_width=True,
+            disabled=not can_manage_centers,
         )
 
     if create_submitted:
-        if not confirmation:
+        if not can_manage_centers:
+            st.error(
+                "You do not have permission to create "
+                "evacuation-center master records."
+            )
+
+        elif not confirmation:
             st.error(
                 "Confirm the official center information "
                 "before saving."

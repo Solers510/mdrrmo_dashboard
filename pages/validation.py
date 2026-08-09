@@ -51,12 +51,6 @@ st.caption(
 )
 
 
-st.warning(
-    "Development mode: reviewer identity is entered "
-    "manually. Authentication has not yet been implemented."
-)
-
-
 success_message = st.session_state.pop(
     "validation_success",
     None,
@@ -425,11 +419,11 @@ if submitted:
         except ValidationDataIntegrityError as error:
             st.error(str(error))
 
+        except ValidationAuthorizationError as error:
+            st.error(str(error))
         except ValidationServiceError as error:
             st.error(str(error))
 
-        except ValidationAuthorizationError as error:
-            st.error(str(error))
 
         except Exception as error:
             st.error(
