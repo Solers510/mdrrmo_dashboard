@@ -132,7 +132,8 @@ summary[2].metric(
     sum(
         1
         for row in reconciliation_rows
-        if row["reconciliation_status"] == "Mismatch"
+        if row["reconciliation_status"]
+        in {"Mismatch", "Allocation Conflict"}
     ),
 )
 summary[3].metric(
@@ -233,6 +234,12 @@ with barangay_tab:
             if state == "Match":
                 st.success(
                     "Barangay Inside-EC figures match the latest EC records."
+                )
+            elif state == "Allocation Conflict":
+                st.error(
+                    "Cross-barangay allocations currently exceed the "
+                    "latest evacuation-center occupancy. Correct the "
+                    "allocation or center occupancy before validation."
                 )
             elif state == "Mismatch":
                 st.warning(
@@ -457,7 +464,13 @@ with ec_tab:
         )
         if reconciliation is not None:
             state = reconciliation["reconciliation_status"]
-            if state == "Mismatch":
+            if state == "Allocation Conflict":
+                st.error(
+                    "Cross-barangay allocations currently exceed the "
+                    "latest center occupancy. Reconcile this exception "
+                    "before validating the report."
+                )
+            elif state == "Mismatch":
                 st.warning(
                     "The latest barangay Inside-EC count differs from "
                     "the latest combined EC records for this barangay. "
@@ -466,7 +479,7 @@ with ec_tab:
             elif state == "No Barangay Report":
                 st.warning(
                     "No current barangay report is available for "
-                    "population reconciliation."
+                    "population or cross-barangay reconciliation."
                 )
             elif state == "Match":
                 st.success(
@@ -612,7 +625,8 @@ with reconciliation_tab:
         mismatches = [
             row
             for row in reconciliation_rows
-            if row["reconciliation_status"] == "Mismatch"
+            if row["reconciliation_status"]
+            in {"Mismatch", "Allocation Conflict"}
         ]
         if mismatches:
             st.warning(

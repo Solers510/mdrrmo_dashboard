@@ -16,6 +16,16 @@ from services.event_service import (
     EventDataIntegrityError,
     get_active_event_summary,
 )
+from services.cross_barangay_service import (
+    CrossBarangayAuthorizationError,
+    CrossBarangayDataIntegrityError,
+    CrossBarangayServiceError,
+    CrossBarangayValidationError,
+    DuplicateCrossBarangaySubmissionError,
+    create_cross_barangay_allocation,
+    get_cross_barangay_context,
+    list_current_cross_barangay_allocations,
+)
 from services.evacuation_service import (
     EvacuationDataIntegrityError,
     EvacuationServiceError,
@@ -130,10 +140,11 @@ barangay_label_to_id = {
 barangay_labels = list(barangay_label_to_id.keys())
 
 
-manage_tab, update_tab, history_tab = st.tabs(
+manage_tab, update_tab, cross_tab, history_tab = st.tabs(
     (
         "Manage Centers",
         "Record Occupancy Update",
+        "Cross-Barangay Allocation",
         "Recent Updates",
     )
 )
@@ -436,8 +447,8 @@ with update_tab:
             )
 
             st.info(
-                "The report will be saved with the status "
-                "Submitted until evacuation validation is added."
+                "The report will be saved as Submitted and will appear "
+                "in Report Validation for review."
             )
 
             confirmation = st.checkbox(
@@ -533,6 +544,263 @@ with update_tab:
                     )
 
                     st.rerun()
+
+
+
+# ---------------------------------------------------------
+# CROSS-BARANGAY EXCEPTION
+# ---------------------------------------------------------
+
+with cross_tab:
+    st.subheader("Cross-Barangay Evacuation Allocation")
+
+    st.caption(
+        "Use this only when evacuees are staying in an evacuation "
+        "center outside their home barangay. Normal barangay-to-own-center "
+        "reporting does not require this form."
+    )
+
+    if not can_manage_centers:
+        st.warning(
+            "Only an Operations Officer or Administrator may "
+            "record this exception."
+        )
+    elif not centers:
+        st.info("No active evacuation centers are available.")
+    else:
+        center_by_id = {
+            int(center["id"]): center
+            for center in centers
+        }
+
+        selected_cross_center_id = st.selectbox(
+            "Host evacuation center *",
+            options=list(center_by_id),
+            format_func=lambda center_id: (
+                f"{center_by_id[center_id]['name']} — "
+                f"{center_by_id[center_id]['barangay_name']}"
+            ),
+            key="cross_barangay_center",
+        )
+
+        try:
+            cross_context = get_cross_barangay_context(
+                center_id=int(selected_cross_center_id)
+            )
+        except CrossBarangayServiceError as error:
+            st.error(str(error))
+            cross_context = None
+
+        if cross_context is not None:
+            latest_update = cross_context["latest_ec_update"]
+
+            if latest_update is None:
+                st.warning(
+                    "This center has no current occupancy report. "
+                    "Record the center occupancy first."
+                )
+            else:
+                occupancy_columns = st.columns(4)
+                occupancy_columns[0].metric(
+                    "Latest EC Families",
+                    int(latest_update["families"]),
+                )
+                occupancy_columns[1].metric(
+                    "Latest EC Individuals",
+                    int(latest_update["individuals"]),
+                )
+                occupancy_columns[2].metric(
+                    "Center Status",
+                    str(latest_update["status"]),
+                )
+                occupancy_columns[3].metric(
+                    "Current Foreign Origins",
+                    len(cross_context["current_allocations"]),
+                )
+
+                origin_options = [
+                    record
+                    for record in barangays
+                    if int(record["id"])
+                    != int(cross_context["host_barangay_id"])
+                ]
+
+                if not origin_options:
+                    st.info(
+                        "No other active barangays are available."
+                    )
+                else:
+                    origin_by_id = {
+                        int(record["id"]): record
+                        for record in origin_options
+                    }
+
+                    nonce = int(
+                        st.session_state.setdefault(
+                            "cross_allocation_nonce",
+                            0,
+                        )
+                    )
+                    token_key = (
+                        f"cross_allocation_token_{nonce}"
+                    )
+                    if token_key not in st.session_state:
+                        st.session_state[token_key] = str(
+                            uuid4()
+                        )
+
+                    with st.form(
+                        f"cross_allocation_form_{nonce}",
+                        clear_on_submit=False,
+                    ):
+                        origin_barangay_id = st.selectbox(
+                            "Home / origin barangay *",
+                            options=list(origin_by_id),
+                            format_func=lambda barangay_id: (
+                                origin_by_id[barangay_id]["name"]
+                            ),
+                        )
+
+                        allocation_columns = st.columns(2)
+                        allocation_families = (
+                            allocation_columns[0].number_input(
+                                "Families from origin barangay",
+                                min_value=0,
+                                step=1,
+                            )
+                        )
+                        allocation_individuals = (
+                            allocation_columns[1].number_input(
+                                "Individuals from origin barangay",
+                                min_value=0,
+                                step=1,
+                            )
+                        )
+
+                        st.caption(
+                            "Enter 0 families / 0 individuals to clear "
+                            "a previous allocation for the selected origin."
+                        )
+
+                        allocation_source = st.text_input(
+                            "Information source *",
+                            placeholder=(
+                                "Camp manager, MSWDO, BDRRMC, "
+                                "registration list"
+                            ),
+                        )
+
+                        allocation_remarks = st.text_area(
+                            "Remarks",
+                            height=100,
+                        )
+
+                        allocation_confirm = st.checkbox(
+                            "I verified that these evacuees normally "
+                            "reside in the selected origin barangay."
+                        )
+
+                        allocation_submitted = (
+                            st.form_submit_button(
+                                "Save Cross-Barangay Allocation",
+                                type="primary",
+                                use_container_width=True,
+                            )
+                        )
+
+                    if allocation_submitted:
+                        if not allocation_confirm:
+                            st.error(
+                                "Confirm the origin before saving."
+                            )
+                        else:
+                            try:
+                                allocation_id = (
+                                    create_cross_barangay_allocation(
+                                        center_id=int(
+                                            selected_cross_center_id
+                                        ),
+                                        origin_barangay_id=int(
+                                            origin_barangay_id
+                                        ),
+                                        families=int(
+                                            allocation_families
+                                        ),
+                                        individuals=int(
+                                            allocation_individuals
+                                        ),
+                                        source=allocation_source,
+                                        remarks=allocation_remarks,
+                                        submission_key=st.session_state[
+                                            token_key
+                                        ],
+                                        actor_user_id=current_user.id,
+                                    )
+                                )
+                            except (
+                                CrossBarangayValidationError,
+                                CrossBarangayAuthorizationError,
+                                CrossBarangayDataIntegrityError,
+                                DuplicateCrossBarangaySubmissionError,
+                                CrossBarangayServiceError,
+                            ) as error:
+                                st.error(str(error))
+                            except Exception:
+                                st.error(
+                                    "The cross-barangay allocation "
+                                    "could not be saved."
+                                )
+                            else:
+                                st.session_state[
+                                    "cross_allocation_nonce"
+                                ] = nonce + 1
+                                st.session_state.pop(
+                                    token_key,
+                                    None,
+                                )
+                                st.session_state[
+                                    "evacuation_success"
+                                ] = (
+                                    "Cross-barangay allocation "
+                                    f"#{allocation_id} saved."
+                                )
+                                st.rerun()
+
+        st.markdown(
+            "#### Current Cross-Barangay Allocations"
+        )
+
+        try:
+            current_allocations = (
+                list_current_cross_barangay_allocations()
+            )
+        except CrossBarangayServiceError as error:
+            st.error(str(error))
+            current_allocations = []
+
+        if not current_allocations:
+            st.info(
+                "No active cross-barangay allocations are recorded."
+            )
+        else:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Center": row["center_name"],
+                            "Origin Barangay": row["origin_barangay_name"],
+                            "Families": row["families"],
+                            "Individuals": row["individuals"],
+                            "Source": row["source"],
+                            "Recorded By": row["recorded_by"],
+                            "Recorded At": row["recorded_at"],
+                        }
+                        for row in current_allocations
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 # ---------------------------------------------------------

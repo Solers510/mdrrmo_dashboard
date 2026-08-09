@@ -989,6 +989,10 @@ class Incident(Base):
 
     __table_args__ = (
         UniqueConstraint(
+            "submission_key",
+            name="uq_incidents_submission_key",
+        ),
+        UniqueConstraint(
             "event_id",
             "control_number",
             name="uq_incidents_event_control_number",
@@ -1040,6 +1044,26 @@ class Incident(Base):
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
+    )
+
+    submission_key: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+    )
+
+    reported_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "app_users.id",
+            name="fk_incidents_reported_by_user_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    reported_by: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
     )
 
     event_id: Mapped[int] = mapped_column(
@@ -1144,6 +1168,249 @@ class Incident(Base):
         nullable=True,
     )
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+class IncidentHistory(Base):
+    __tablename__ = "incident_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "incidents.id",
+            name="fk_incident_history_incident_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+    change_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    previous_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "app_users.id",
+            name="fk_incident_history_changed_by_user_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+    changed_by: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    effective_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class ResponseResource(Base):
+    __tablename__ = "response_resources"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "resource_code",
+            name="uq_response_resources_code",
+        ),
+        CheckConstraint(
+            "resource_type IN ('Response Team', 'Vehicle', 'Equipment')",
+            name="ck_response_resources_type",
+        ),
+        CheckConstraint(
+            "status IN ('Available', 'Assigned', 'Maintenance', 'Out of Service')",
+            name="ck_response_resources_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    resource_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    subtype: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="Available",
+        server_default="Available",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class IncidentResourceAssignment(Base):
+    __tablename__ = "incident_resource_assignments"
+
+    __table_args__ = (
+        Index(
+            "uq_active_incident_resource_assignment",
+            "resource_id",
+            unique=True,
+            postgresql_where=text("released_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "incidents.id",
+            name="fk_incident_resource_assignments_incident_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "response_resources.id",
+            name="fk_incident_resource_assignments_resource_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+    assigned_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "app_users.id",
+            name="fk_incident_resource_assignments_assigned_by_user_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+    assigned_by: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    released_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class CrossBarangayEvacuationAllocation(Base):
+    __tablename__ = "cross_barangay_evacuation_allocations"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "submission_key",
+            name="uq_cross_barangay_allocations_submission_key",
+        ),
+        CheckConstraint(
+            "families >= 0 AND individuals >= 0 AND families <= individuals",
+            name="ck_cross_barangay_allocation_counts",
+        ),
+        Index(
+            "ix_cross_barangay_allocations_event_id",
+            "event_id",
+        ),
+        Index(
+            "ix_cross_barangay_allocations_center_id",
+            "evacuation_center_id",
+        ),
+        Index(
+            "ix_cross_barangay_allocations_origin_id",
+            "origin_barangay_id",
+        ),
+        Index(
+            "ix_cross_barangay_allocations_recorded_by_user_id",
+            "recorded_by_user_id",
+        ),
+        Index(
+            "ix_cross_barangay_allocations_recorded_at",
+            "recorded_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "disaster_events.id",
+            name="fk_cross_barangay_allocations_event_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    evacuation_center_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "evacuation_centers.id",
+            name="fk_cross_barangay_allocations_center_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    origin_barangay_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "barangays.id",
+            name="fk_cross_barangay_allocations_origin_barangay_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    submission_key: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+    )
+    families: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    individuals: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    source: Mapped[str] = mapped_column(String(255), nullable=False)
+    remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recorded_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "app_users.id",
+            name="fk_cross_barangay_allocations_recorded_by_user_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    recorded_by: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
