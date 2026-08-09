@@ -952,3 +952,122 @@ def fetch_latest_evacuation_updates_for_barangay(
     return session.execute(
         statement
     ).mappings().all()
+
+def fetch_evacuation_validation_queue(
+    session: Session,
+    *,
+    event_id: int,
+):
+    statement = (
+        select(
+            EvacuationCenterUpdate.id,
+            EvacuationCenterUpdate.event_id,
+            EvacuationCenterUpdate.evacuation_center_id,
+            EvacuationCenter.name.label("center_name"),
+            EvacuationCenter.barangay_id.label("barangay_id"),
+            Barangay.name.label("barangay_name"),
+            EvacuationCenter.safe_capacity,
+            EvacuationCenterUpdate.status,
+            EvacuationCenterUpdate.families,
+            EvacuationCenterUpdate.individuals,
+            EvacuationCenterUpdate.children,
+            EvacuationCenterUpdate.senior_citizens,
+            EvacuationCenterUpdate.pwd,
+            EvacuationCenterUpdate.pregnant_women,
+            EvacuationCenterUpdate.medical_cases,
+            EvacuationCenterUpdate.food_status,
+            EvacuationCenterUpdate.water_status,
+            EvacuationCenterUpdate.electricity_status,
+            EvacuationCenterUpdate.sanitation_status,
+            EvacuationCenterUpdate.source,
+            EvacuationCenterUpdate.validation_status,
+            EvacuationCenterUpdate.remarks,
+            EvacuationCenterUpdate.recorded_at,
+        )
+        .join(
+            EvacuationCenter,
+            EvacuationCenter.id
+            == EvacuationCenterUpdate.evacuation_center_id,
+        )
+        .join(
+            Barangay,
+            Barangay.id == EvacuationCenter.barangay_id,
+        )
+        .where(
+            EvacuationCenterUpdate.event_id == event_id,
+            EvacuationCenterUpdate.validation_status.in_(
+                (
+                    "Submitted",
+                    "For Validation",
+                )
+            ),
+        )
+        .order_by(
+            EvacuationCenterUpdate.recorded_at.desc(),
+            EvacuationCenterUpdate.id.desc(),
+        )
+    )
+
+    return session.execute(statement).mappings().all()
+
+
+def fetch_evacuation_update_for_review(
+    session: Session,
+    *,
+    update_id: int,
+) -> EvacuationCenterUpdate | None:
+    statement = (
+        select(EvacuationCenterUpdate)
+        .where(
+            EvacuationCenterUpdate.id == update_id
+        )
+        .with_for_update()
+    )
+
+    return session.scalar(statement)
+
+
+def fetch_needs_correction_barangay_updates(
+    session: Session,
+    *,
+    event_id: int,
+    barangay_id: int,
+):
+    statement = (
+        select(BarangayUpdate)
+        .where(
+            BarangayUpdate.event_id == event_id,
+            BarangayUpdate.barangay_id == barangay_id,
+            BarangayUpdate.validation_status == "Needs Correction",
+        )
+        .order_by(
+            BarangayUpdate.recorded_at.desc(),
+            BarangayUpdate.id.desc(),
+        )
+        .with_for_update()
+    )
+
+    return session.scalars(statement).all()
+
+
+def fetch_needs_correction_evacuation_updates(
+    session: Session,
+    *,
+    event_id: int,
+    center_id: int,
+):
+    statement = (
+        select(EvacuationCenterUpdate)
+        .where(
+            EvacuationCenterUpdate.event_id == event_id,
+            EvacuationCenterUpdate.evacuation_center_id == center_id,
+            EvacuationCenterUpdate.validation_status == "Needs Correction",
+        )
+        .order_by(
+            EvacuationCenterUpdate.recorded_at.desc(),
+            EvacuationCenterUpdate.id.desc(),
+        )
+        .with_for_update()
+    )
+
+    return session.scalars(statement).all()

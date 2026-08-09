@@ -454,6 +454,16 @@ class BarangayUpdate(Base):
         primary_key=True,
     )
 
+    supersedes_update_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "barangay_updates.id",
+            name="fk_barangay_updates_supersedes_update_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     submission_key: Mapped[str | None] = mapped_column(
         String(36),
         nullable=True,
@@ -788,6 +798,16 @@ class EvacuationCenterUpdate(Base):
         primary_key=True,
     )
 
+    supersedes_update_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "evacuation_center_updates.id",
+            name="fk_evacuation_center_updates_supersedes_update_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     submission_key: Mapped[str | None] = mapped_column(
         String(36),
         nullable=True,
@@ -918,6 +938,31 @@ class EvacuationCenterUpdate(Base):
         nullable=False,
         default="Submitted",
         server_default="Submitted",
+    )
+
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "app_users.id",
+            name="fk_evacuation_center_updates_reviewed_by_user_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    reviewed_by: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
+    review_notes: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     remarks: Mapped[str | None] = mapped_column(

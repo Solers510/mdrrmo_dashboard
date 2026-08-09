@@ -15,6 +15,7 @@ from database.repositories import (
     fetch_barangay_by_id,
     fetch_barangay_update_by_submission_key,
     fetch_latest_evacuation_updates_for_barangay,
+    fetch_needs_correction_barangay_updates,
     fetch_recent_barangay_updates,
 )
 from services.data_integrity import (
@@ -315,9 +316,24 @@ def create_barangay_update(
                     str(error)
                 ) from error
 
+            correction_reports = (
+                fetch_needs_correction_barangay_updates(
+                    session,
+                    event_id=event_id,
+                    barangay_id=int(barangay.id),
+                )
+            )
+
+            supersedes_update_id = (
+                int(correction_reports[0].id)
+                if correction_reports
+                else None
+            )
+
             update = BarangayUpdate(
                 event_id=event_id,
                 barangay_id=barangay.id,
+                supersedes_update_id=supersedes_update_id,
                 submission_key=canonical_key,
                 submitted_by_user_id=submitter.id,
                 submitted_by=(
@@ -347,6 +363,9 @@ def create_barangay_update(
                     else None
                 ),
             )
+
+            for previous_report in correction_reports:
+                previous_report.validation_status = "Superseded"
 
             session.add(update)
             session.flush()

@@ -18,6 +18,7 @@ from database.repositories import (
     fetch_evacuation_center_by_id,
     fetch_evacuation_center_by_name_barangay,
     fetch_evacuation_update_by_submission_key,
+    fetch_needs_correction_evacuation_updates,
     fetch_recent_evacuation_center_updates,
 )
 from services.data_integrity import (
@@ -307,9 +308,24 @@ def create_evacuation_center_update(
                 active_events[0]["id"]
             )
 
+            correction_reports = (
+                fetch_needs_correction_evacuation_updates(
+                    session,
+                    event_id=event_id,
+                    center_id=int(center.id),
+                )
+            )
+
+            supersedes_update_id = (
+                int(correction_reports[0].id)
+                if correction_reports
+                else None
+            )
+
             update = EvacuationCenterUpdate(
                 event_id=event_id,
                 evacuation_center_id=center.id,
+                supersedes_update_id=supersedes_update_id,
                 submission_key=canonical_key,
                 submitted_by_user_id=(
                     submitter.id
@@ -340,6 +356,9 @@ def create_evacuation_center_update(
                     else None
                 ),
             )
+
+            for previous_report in correction_reports:
+                previous_report.validation_status = "Superseded"
 
             session.add(update)
             session.flush()
