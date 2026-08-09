@@ -1,20 +1,35 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import streamlit as st
 
-from config.constants import EOC_STATUSES, HAZARD_TYPES
-from services.event_service import (
-    ActiveEventAlreadyExistsError,
-    EventDataIntegrityError,
-    EventServiceError,
-    EventValidationError,
-    create_event,
-    get_active_event_summary,
-    list_alert_levels,
-)
 from config.access_control import (
     PERMISSION_MANAGE_EVENTS,
+    ROLE_ADMINISTRATOR,
+)
+from config.constants import (
+    EOC_STATUSES,
+    HAZARD_TYPES,
+    TROPICAL_CYCLONE_CLASSIFICATIONS,
+)
+from services.event_service import (
+    ActiveEventAlreadyExistsError,
+    EventAuthorizationError,
+    EventDataIntegrityError,
+    EventServiceError,
+    EventStateError,
+    EventValidationError,
+    change_eoc_status,
+    change_event_alert,
+    close_event,
+    create_event,
+    get_active_event_summary,
+    get_event_history,
+    list_alert_levels,
+    list_recent_events,
+    reopen_event,
+    update_event_details,
 )
 from utils.auth import require_permission
 
@@ -23,32 +38,69 @@ current_user = require_permission(
     PERMISSION_MANAGE_EVENTS
 )
 
-MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
+MANILA_TIMEZONE = ZoneInfo(
+    "Asia/Manila"
+)
 
 
-def format_datetime(value: datetime | None) -> str:
-    """
-    Convert a stored datetime to a readable Manila timestamp.
-    """
+def format_datetime(
+    value: datetime | None,
+) -> str:
     if value is None:
         return "Not provided"
 
-    localized = value.astimezone(MANILA_TIMEZONE)
-
-    return localized.strftime(
+    return value.astimezone(
+        MANILA_TIMEZONE
+    ).strftime(
         "%d %B %Y, %I:%M %p"
     )
+
+
+def display_event_name(
+    event: dict[str, object],
+) -> str:
+    classification = event.get(
+        "classification"
+    )
+
+    name = str(
+        event["event_name"]
+    )
+
+    if classification:
+        return (
+            f"{classification} {name}"
+        )
+
+    return name
+
+
+def combine_manila(
+    date_value,
+    time_value,
+) -> datetime:
+    return datetime.combine(
+        date_value,
+        time_value,
+    ).replace(
+        tzinfo=MANILA_TIMEZONE
+    )
+
+
+def show_service_error(
+    error: Exception,
+) -> None:
+    st.error(str(error))
 
 
 st.title("Event Control")
 
 st.caption(
-    "Create and manage the current disaster event, "
-    "operational alert level, EOC status, and reporting period."
+    "Create, update, escalate, stand down, "
+    "close, and audit the current disaster event."
 )
 
 
-# Display a message after the page reruns.
 success_message = st.session_state.pop(
     "event_control_success",
     None,
@@ -58,316 +110,907 @@ if success_message:
     st.success(success_message)
 
 
-# Load database data.
 try:
     alert_levels = list_alert_levels()
-    active_event = get_active_event_summary()
-
-except EventDataIntegrityError as error:
-    st.error(str(error))
-    st.stop()
-
-except Exception as error:
-    st.error(
-        "The Event Control page could not retrieve data "
-        "from PostgreSQL."
+    active_event = (
+        get_active_event_summary()
+    )
+    recent_events = list_recent_events(
+        limit=20
     )
 
-    # Useful during development. Remove technical details
-    # from the production version.
-    st.exception(error)
+except EventServiceError as error:
+    show_service_error(error)
+    st.stop()
+
+except Exception:
+    st.error(
+        "Event Control could not retrieve "
+        "operational data."
+    )
     st.stop()
 
 
 if not alert_levels:
     st.error(
-        "No active alert-level records were found. "
-        "Run the master-data seed script."
-    )
-    st.code(
-        "python -m scripts.seed_master_data",
-        language="powershell",
+        "No alert levels exist. Run the "
+        "master-data seed script."
     )
     st.stop()
 
 
-# ---------------------------------------------------------
-# ACTIVE EVENT DISPLAY
-# ---------------------------------------------------------
+alert_labels = [
+    (
+        f"{row['name']} — "
+        f"{row['code']}"
+    )
+    for row in alert_levels
+]
 
-if active_event is not None:
-    st.subheader("Current Active Event")
+alert_label_to_code = {
+    (
+        f"{row['name']} — "
+        f"{row['code']}"
+    ): str(row["code"])
+    for row in alert_levels
+}
 
-    column_1, column_2, column_3, column_4 = st.columns(4)
 
-    with column_1:
-        st.metric(
-            label="Event",
-            value=str(active_event["event_name"]),
+now = datetime.now(
+    MANILA_TIMEZONE
+)
+
+
+if active_event is None:
+    create_tab, reopen_tab = st.tabs(
+        (
+            "Create New Event",
+            "Reopen Closed Event",
+        )
+    )
+
+    with create_tab:
+        st.subheader(
+            "Create Active Event"
         )
 
-    with column_2:
-        st.metric(
-            label="Alert Level",
-            value=str(active_event["alert_code"]),
+        event_name = st.text_input(
+            "Event name *",
+            placeholder="Example: Luis",
+            help=(
+                "For a named tropical cyclone, "
+                "enter the name only. Its current "
+                "classification is stored separately."
+            ),
+            key="new_event_name",
         )
 
-    with column_3:
-        st.metric(
-            label="EOC Status",
-            value=str(active_event["eoc_status"]),
+        hazard_type = st.selectbox(
+            "Hazard type *",
+            options=HAZARD_TYPES,
+            key="new_event_hazard",
         )
 
-    with column_4:
-        st.metric(
-            label="Hazard",
-            value=str(active_event["hazard_type"]),
+        classification = None
+
+        if (
+            hazard_type
+            == "Tropical Cyclone"
+        ):
+            classification = (
+                st.selectbox(
+                    "Current tropical-cyclone "
+                    "classification *",
+                    options=(
+                        TROPICAL_CYCLONE_CLASSIFICATIONS
+                    ),
+                    key=(
+                        "new_event_classification"
+                    ),
+                )
+            )
+
+        selected_alert_label = (
+            st.selectbox(
+                "Initial alert level *",
+                options=alert_labels,
+                key="new_event_alert",
+            )
         )
+
+        eoc_status = st.selectbox(
+            "EOC status *",
+            options=EOC_STATUSES,
+            key="new_event_eoc",
+        )
+
+        time_columns = st.columns(2)
+
+        with time_columns[0]:
+            start_date = st.date_input(
+                "Start date *",
+                value=now.date(),
+                key="new_event_date",
+            )
+
+        with time_columns[1]:
+            start_time = st.time_input(
+                "Start time *",
+                value=(
+                    now.time()
+                    .replace(
+                        second=0,
+                        microsecond=0,
+                        tzinfo=None,
+                    )
+                ),
+                key="new_event_time",
+            )
+
+        sitrep = st.text_input(
+            "Current SitRep number",
+            key="new_event_sitrep",
+        )
+
+        official_reference = (
+            st.text_input(
+                "Official event reference",
+                key="new_event_reference",
+            )
+        )
+
+        overview = st.text_area(
+            "Initial situation overview",
+            height=130,
+            key="new_event_overview",
+        )
+
+        initial_reason = st.text_area(
+            "Reason for initial alert level *",
+            height=100,
+            key="new_event_reason",
+        )
+
+        authority = st.text_input(
+            "Declaring authority or reference",
+            key="new_event_authority",
+        )
+
+        confirmation = st.checkbox(
+            "I confirm that this reflects "
+            "the authorized operational record.",
+            key="new_event_confirm",
+        )
+
+        if st.button(
+            "Create Active Event",
+            type="primary",
+            use_container_width=True,
+            disabled=not confirmation,
+            key="new_event_submit",
+        ):
+            try:
+                event_id = create_event(
+                    event_name=event_name,
+                    hazard_type=hazard_type,
+                    classification=(
+                        classification
+                    ),
+                    alert_code=(
+                        alert_label_to_code[
+                            selected_alert_label
+                        ]
+                    ),
+                    eoc_status=eoc_status,
+                    started_at=combine_manila(
+                        start_date,
+                        start_time,
+                    ),
+                    current_sitrep_number=sitrep,
+                    official_reference=(
+                        official_reference
+                    ),
+                    situation_overview=overview,
+                    initial_alert_reason=(
+                        initial_reason
+                    ),
+                    authority_reference=authority,
+                    actor_user_id=(
+                        current_user.id
+                    ),
+                )
+
+            except (
+                EventValidationError,
+                EventAuthorizationError,
+                EventDataIntegrityError,
+                ActiveEventAlreadyExistsError,
+                EventServiceError,
+            ) as error:
+                show_service_error(error)
+
+            else:
+                st.session_state[
+                    "event_control_success"
+                ] = (
+                    f"Event #{event_id} was "
+                    "created successfully."
+                )
+
+                st.rerun()
+
+    with reopen_tab:
+        if (
+            current_user.role
+            != ROLE_ADMINISTRATOR
+        ):
+            st.info(
+                "Only an Administrator may "
+                "reopen a closed event."
+            )
+
+        else:
+            closed_events = [
+                row
+                for row in recent_events
+                if not row["is_active"]
+            ]
+
+            if not closed_events:
+                st.info(
+                    "No closed events are "
+                    "available to reopen."
+                )
+
+            else:
+                event_by_id = {
+                    int(row["id"]): row
+                    for row in closed_events
+                }
+
+                selected_id = st.selectbox(
+                    "Closed event",
+                    options=list(
+                        event_by_id
+                    ),
+                    format_func=(
+                        lambda event_id: (
+                            f"#{event_id} — "
+                            f"{display_event_name(event_by_id[event_id])}"
+                        )
+                    ),
+                    key="reopen_event_id",
+                )
+
+                reason = st.text_area(
+                    "Reason for reopening *",
+                    key="reopen_reason",
+                )
+
+                reference = st.text_input(
+                    "Authority or reference",
+                    key="reopen_reference",
+                )
+
+                confirm_reopen = (
+                    st.checkbox(
+                        "I understand that "
+                        "reopening restores this "
+                        "as the active event.",
+                        key="reopen_confirm",
+                    )
+                )
+
+                if st.button(
+                    "Reopen Event",
+                    disabled=(
+                        not confirm_reopen
+                    ),
+                    key="reopen_submit",
+                ):
+                    try:
+                        reopen_event(
+                            event_id=int(
+                                selected_id
+                            ),
+                            reason=reason,
+                            authority_reference=(
+                                reference
+                            ),
+                            actor_user_id=(
+                                current_user.id
+                            ),
+                        )
+
+                    except (
+                        EventServiceError
+                    ) as error:
+                        show_service_error(
+                            error
+                        )
+
+                    else:
+                        st.session_state[
+                            "event_control_success"
+                        ] = (
+                            f"Event #{selected_id} "
+                            "was reopened."
+                        )
+
+                        st.rerun()
+
+    st.stop()
+
+
+st.subheader(
+    display_event_name(
+        active_event
+    )
+)
+
+summary_columns = st.columns(4)
+
+with summary_columns[0]:
+    st.metric(
+        "Hazard",
+        str(
+            active_event[
+                "hazard_type"
+            ]
+        ),
+    )
+
+with summary_columns[1]:
+    st.metric(
+        "Classification",
+        str(
+            active_event.get(
+                "classification"
+            )
+            or "—"
+        ),
+    )
+
+with summary_columns[2]:
+    st.metric(
+        "Alert Level",
+        str(
+            active_event[
+                "alert_code"
+            ]
+        ),
+    )
+
+with summary_columns[3]:
+    st.metric(
+        "EOC Status",
+        str(
+            active_event[
+                "eoc_status"
+            ]
+        ),
+    )
+
+
+st.caption(
+    "Started: "
+    + format_datetime(
+        active_event[
+            "started_at"
+        ]
+    )
+)
+
+
+try:
+    history = get_event_history(
+        event_id=int(
+            active_event["id"]
+        ),
+        limit=100,
+    )
+
+except EventServiceError:
+    history = []
+
+
+(
+    overview_tab,
+    details_tab,
+    operations_tab,
+    history_tab,
+    close_tab,
+) = st.tabs(
+    (
+        "Overview",
+        "Update Details",
+        "Alert & EOC",
+        "History",
+        "Close Event",
+    )
+)
+
+
+with overview_tab:
+    st.write(
+        "**SitRep:**",
+        active_event[
+            "current_sitrep_number"
+        ]
+        or "Not provided",
+    )
+
+    st.write(
+        "**Official reference:**",
+        active_event[
+            "official_reference"
+        ]
+        or "Not provided",
+    )
+
+    st.write(
+        "**Situation overview:**",
+        active_event[
+            "situation_overview"
+        ]
+        or "No overview entered.",
+    )
+
+    st.info(
+        "Event name, cyclone classification, "
+        "SitRep, reference, and overview can be "
+        "updated without creating a new event."
+    )
+
+
+with details_tab:
+    edit_name = st.text_input(
+        "Event name *",
+        value=str(
+            active_event[
+                "event_name"
+            ]
+        ),
+        key="edit_event_name",
+    )
+
+    edit_classification = (
+        active_event.get(
+            "classification"
+        )
+    )
+
+    if (
+        active_event[
+            "hazard_type"
+        ]
+        == "Tropical Cyclone"
+    ):
+        current_classification = (
+            active_event.get(
+                "classification"
+            )
+        )
+
+        if (
+            current_classification
+            in TROPICAL_CYCLONE_CLASSIFICATIONS
+        ):
+            default_index = (
+                TROPICAL_CYCLONE_CLASSIFICATIONS.index(
+                    current_classification
+                )
+            )
+        else:
+            default_index = 0
+
+        edit_classification = (
+            st.selectbox(
+                "Current classification *",
+                options=(
+                    TROPICAL_CYCLONE_CLASSIFICATIONS
+                ),
+                index=default_index,
+                key="edit_classification",
+            )
+        )
+
+    edit_sitrep = st.text_input(
+        "Current SitRep number",
+        value=(
+            active_event[
+                "current_sitrep_number"
+            ]
+            or ""
+        ),
+        key="edit_sitrep",
+    )
+
+    edit_reference = (
+        st.text_input(
+            "Official event reference",
+            value=(
+                active_event[
+                    "official_reference"
+                ]
+                or ""
+            ),
+            key="edit_reference",
+        )
+    )
+
+    edit_overview = (
+        st.text_area(
+            "Situation overview",
+            value=(
+                active_event[
+                    "situation_overview"
+                ]
+                or ""
+            ),
+            height=150,
+            key="edit_overview",
+        )
+    )
+
+    edit_reason = st.text_area(
+        "Reason for change *",
+        key="edit_reason",
+    )
+
+    edit_authority = (
+        st.text_input(
+            "Authority or supporting reference",
+            key="edit_authority",
+        )
+    )
+
+    if st.button(
+        "Save Event Details",
+        type="primary",
+        key="edit_submit",
+    ):
+        try:
+            update_event_details(
+                event_id=int(
+                    active_event["id"]
+                ),
+                event_name=edit_name,
+                classification=(
+                    edit_classification
+                ),
+                current_sitrep_number=(
+                    edit_sitrep
+                ),
+                official_reference=(
+                    edit_reference
+                ),
+                situation_overview=(
+                    edit_overview
+                ),
+                reason=edit_reason,
+                authority_reference=(
+                    edit_authority
+                ),
+                actor_user_id=(
+                    current_user.id
+                ),
+            )
+
+        except EventServiceError as error:
+            show_service_error(error)
+
+        else:
+            st.session_state[
+                "event_control_success"
+            ] = "Event details updated."
+
+            st.rerun()
+
+
+with operations_tab:
+    st.markdown(
+        "### Change alert level"
+    )
+
+    current_alert_index = next(
+        (
+            index
+            for index, label
+            in enumerate(
+                alert_labels
+            )
+            if (
+                alert_label_to_code[
+                    label
+                ]
+                == active_event[
+                    "alert_code"
+                ]
+            )
+        ),
+        0,
+    )
+
+    new_alert_label = st.selectbox(
+        "New alert level",
+        options=alert_labels,
+        index=current_alert_index,
+        key="change_alert_label",
+    )
+
+    alert_time_columns = (
+        st.columns(2)
+    )
+
+    with alert_time_columns[0]:
+        alert_date = st.date_input(
+            "Alert effective date",
+            value=now.date(),
+            key="change_alert_date",
+        )
+
+    with alert_time_columns[1]:
+        alert_time = st.time_input(
+            "Alert effective time",
+            value=(
+                now.time()
+                .replace(
+                    second=0,
+                    microsecond=0,
+                    tzinfo=None,
+                )
+            ),
+            key="change_alert_time",
+        )
+
+    alert_reason = st.text_area(
+        "Reason for alert change *",
+        key="change_alert_reason",
+    )
+
+    alert_reference = (
+        st.text_input(
+            "Alert authority/reference",
+            key="change_alert_reference",
+        )
+    )
+
+    if st.button(
+        "Apply Alert Change",
+        type="primary",
+        key="alert_submit",
+    ):
+        try:
+            change_event_alert(
+                event_id=int(
+                    active_event["id"]
+                ),
+                new_alert_code=(
+                    alert_label_to_code[
+                        new_alert_label
+                    ]
+                ),
+                effective_at=(
+                    combine_manila(
+                        alert_date,
+                        alert_time,
+                    )
+                ),
+                reason=alert_reason,
+                authority_reference=(
+                    alert_reference
+                ),
+                actor_user_id=(
+                    current_user.id
+                ),
+            )
+
+        except EventServiceError as error:
+            show_service_error(error)
+
+        else:
+            st.session_state[
+                "event_control_success"
+            ] = (
+                "Alert level updated."
+            )
+
+            st.rerun()
+
 
     st.divider()
 
-    detail_column_1, detail_column_2 = st.columns(2)
-
-    with detail_column_1:
-        st.markdown("#### Event details")
-
-        st.write(
-            "**Started:**",
-            format_datetime(active_event["started_at"]),
-        )
-
-        st.write(
-            "**SitRep number:**",
-            active_event["current_sitrep_number"]
-            or "Not provided",
-        )
-
-        st.write(
-            "**Official reference:**",
-            active_event["official_reference"]
-            or "Not provided",
-        )
-
-    with detail_column_2:
-        st.markdown("#### Situation overview")
-
-        st.write(
-            active_event["situation_overview"]
-            or "No situation overview has been entered."
-        )
-
-    st.info(
-        "A current active event already exists. "
-        "The event-closing and alert-change functions "
-        "will be added in the next phases."
+    st.markdown(
+        "### Change EOC status"
     )
 
-    # Stop here so the create-event form is not displayed.
-    st.stop()
-
-
-# ---------------------------------------------------------
-# CREATE EVENT FORM
-# ---------------------------------------------------------
-
-st.subheader("Create Active Event")
-
-st.info(
-    "No active disaster event currently exists. "
-    "Complete the form below to create one."
-)
-
-
-alert_label_to_code = {
-    f"{record['name']} — {record['code']}": record["code"]
-    for record in alert_levels
-}
-
-alert_labels = list(alert_label_to_code.keys())
-
-current_time = datetime.now(MANILA_TIMEZONE)
-
-default_date = current_time.date()
-
-default_time = current_time.time().replace(
-    second=0,
-    microsecond=0,
-    tzinfo=None,
-)
-
-
-with st.form(
-    "create_event_form",
-    clear_on_submit=False,
-):
-    st.markdown("### Basic event information")
-
-    event_name = st.text_input(
-        "Event name *",
-        placeholder="Example: Tropical Depression Luis",
-        help=(
-            "Use the official or locally adopted event name."
-        ),
-    )
-
-    hazard_type = st.selectbox(
-        "Hazard type *",
-        options=HAZARD_TYPES,
-    )
-
-    selected_alert_label = st.selectbox(
-        "Initial alert level *",
-        options=alert_labels,
-        help=(
-            "Select the officially declared operational "
-            "alert level."
-        ),
-    )
-
-    eoc_status = st.selectbox(
-        "EOC status *",
-        options=EOC_STATUSES,
-    )
-
-    st.markdown("### Effective date and time")
-
-    date_column, time_column = st.columns(2)
-
-    with date_column:
-        start_date = st.date_input(
-            "Start date *",
-            value=default_date,
-        )
-
-    with time_column:
-        start_time = st.time_input(
-            "Start time *",
-            value=default_time,
-        )
-
-    st.markdown("### Reporting information")
-
-    current_sitrep_number = st.text_input(
-        "Current SitRep number",
-        placeholder="Example: SitRep No. 1",
-    )
-
-    official_reference = st.text_input(
-        "Official event reference",
-        placeholder=(
-            "Bulletin, memorandum, advisory, "
-            "executive order, or reference number"
-        ),
-    )
-
-    situation_overview = st.text_area(
-        "Initial situation overview",
-        placeholder=(
-            "Enter the initial operational situation "
-            "and known conditions."
-        ),
-        height=150,
-    )
-
-    st.markdown("### Alert-level documentation")
-
-    initial_alert_reason = st.text_area(
-        "Reason for initial alert level *",
-        placeholder=(
-            "State why this alert level is in effect. "
-            "Do not rely only on the color or label."
-        ),
-        height=120,
-    )
-
-    authority_reference = st.text_input(
-        "Declaring authority or reference",
-        placeholder=(
-            "Name, position, office order, "
-            "memorandum, or other authority"
-        ),
-    )
-
-    confirmation = st.checkbox(
-        "I confirm that the entered event and alert "
-        "information reflects the authorized operational record."
-    )
-
-    submitted = st.form_submit_button(
-        "Create Active Event",
-        type="primary",
-        use_container_width=True,
-    )
-
-
-if submitted:
-    validation_errors: list[str] = []
-
-    if not event_name.strip():
-        validation_errors.append(
-            "Event name is required."
-        )
-
-    if not initial_alert_reason.strip():
-        validation_errors.append(
-            "Reason for the initial alert level is required."
-        )
-
-    if not confirmation:
-        validation_errors.append(
-            "You must confirm the operational record "
-            "before saving."
-        )
-
-    if validation_errors:
-        for validation_error in validation_errors:
-            st.error(validation_error)
-
-    else:
-        selected_alert_code = alert_label_to_code[
-            selected_alert_label
-        ]
-
-        started_at = datetime.combine(
-            start_date,
-            start_time,
-        ).replace(
-            tzinfo=MANILA_TIMEZONE
-        )
-
-        try:
-            event_id = create_event(
-                event_name=event_name,
-                hazard_type=hazard_type,
-                alert_code=selected_alert_code,
-                eoc_status=eoc_status,
-                started_at=started_at,
-                current_sitrep_number=current_sitrep_number,
-                official_reference=official_reference,
-                situation_overview=situation_overview,
-                initial_alert_reason=initial_alert_reason,
-                authority_reference=authority_reference,
+    current_eoc_index = (
+        EOC_STATUSES.index(
+            str(
+                active_event[
+                    "eoc_status"
+                ]
             )
+        )
+    )
 
-        except ActiveEventAlreadyExistsError as error:
-            st.warning(str(error))
+    new_eoc = st.selectbox(
+        "New EOC status",
+        options=EOC_STATUSES,
+        index=current_eoc_index,
+        key="change_eoc_status",
+    )
 
-        except EventValidationError as error:
-            st.error(str(error))
+    eoc_reason = st.text_area(
+        "Reason for EOC-status change *",
+        key="change_eoc_reason",
+    )
+
+    eoc_reference = st.text_input(
+        "EOC authority/reference",
+        key="change_eoc_reference",
+    )
+
+    if st.button(
+        "Apply EOC Change",
+        key="eoc_submit",
+    ):
+        try:
+            change_eoc_status(
+                event_id=int(
+                    active_event["id"]
+                ),
+                new_status=new_eoc,
+                reason=eoc_reason,
+                authority_reference=(
+                    eoc_reference
+                ),
+                actor_user_id=(
+                    current_user.id
+                ),
+            )
 
         except EventServiceError as error:
-            st.error(str(error))
-
-        except Exception as error:
-            st.error(
-                "An unexpected database error occurred "
-                "while creating the event."
-            )
-            st.exception(error)
+            show_service_error(error)
 
         else:
-            st.session_state["event_control_success"] = (
-                f"Event #{event_id} was created successfully."
+            st.session_state[
+                "event_control_success"
+            ] = (
+                "EOC status updated."
+            )
+
+            st.rerun()
+
+
+with history_tab:
+    if not history:
+        st.info(
+            "No event-change history "
+            "is available yet."
+        )
+
+    else:
+        history_rows = [
+            {
+                "When": row[
+                    "effective_at"
+                ],
+                "Change": row[
+                    "change_type"
+                ],
+                "Field": row[
+                    "field_name"
+                ],
+                "Previous": row[
+                    "previous_value"
+                ],
+                "New": row[
+                    "new_value"
+                ],
+                "Reason": row[
+                    "reason"
+                ],
+                "Authority/Reference": row[
+                    "authority_reference"
+                ],
+                "Changed By": row[
+                    "changed_by"
+                ],
+            }
+            for row in history
+        ]
+
+        st.dataframe(
+            pd.DataFrame(
+                history_rows
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+with close_tab:
+    st.warning(
+        "Closing the event stops new barangay "
+        "and evacuation-center reports until "
+        "another event is created or an "
+        "Administrator reopens this event."
+    )
+
+    close_time_columns = (
+        st.columns(2)
+    )
+
+    with close_time_columns[0]:
+        end_date = st.date_input(
+            "End date *",
+            value=now.date(),
+            key="close_date",
+        )
+
+    with close_time_columns[1]:
+        end_time = st.time_input(
+            "End time *",
+            value=(
+                now.time()
+                .replace(
+                    second=0,
+                    microsecond=0,
+                    tzinfo=None,
+                )
+            ),
+            key="close_time",
+        )
+
+    close_reason = st.text_area(
+        "Reason for closing event *",
+        key="close_reason",
+    )
+
+    close_reference = st.text_input(
+        "Authority/reference",
+        key="close_reference",
+    )
+
+    close_confirm = st.checkbox(
+        "I confirm that operational reporting "
+        "for this event should stop.",
+        key="close_confirm",
+    )
+
+    if st.button(
+        "Close Active Event",
+        disabled=not close_confirm,
+        key="close_submit",
+    ):
+        try:
+            close_event(
+                event_id=int(
+                    active_event["id"]
+                ),
+                ended_at=combine_manila(
+                    end_date,
+                    end_time,
+                ),
+                reason=close_reason,
+                authority_reference=(
+                    close_reference
+                ),
+                actor_user_id=(
+                    current_user.id
+                ),
+            )
+
+        except EventServiceError as error:
+            show_service_error(error)
+
+        else:
+            st.session_state[
+                "event_control_success"
+            ] = (
+                "Event closed successfully."
             )
 
             st.rerun()

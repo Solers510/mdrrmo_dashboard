@@ -1,16 +1,29 @@
+from sqlalchemy.exc import IntegrityError
+
+from config.access_control import (
+    PERMISSION_MANAGE_EVACUATION_CENTERS,
+    PERMISSION_SUBMIT_EVACUATION_UPDATES,
+    permissions_for_role,
+)
 from database.connection import SessionLocal, session_scope
 from database.models import (
     EvacuationCenter,
     EvacuationCenterUpdate,
 )
 from database.repositories import (
-    fetch_active_barangays,
     fetch_active_event_rows,
     fetch_active_evacuation_centers,
+    fetch_app_user_by_id,
     fetch_barangay_by_id,
     fetch_evacuation_center_by_id,
     fetch_evacuation_center_by_name_barangay,
+    fetch_evacuation_update_by_submission_key,
     fetch_recent_evacuation_center_updates,
+)
+from services.data_integrity import (
+    DataIntegrityValidationError,
+    validate_evacuation_occupancy,
+    validate_submission_key,
 )
 
 
@@ -18,31 +31,74 @@ class EvacuationServiceError(Exception):
     """Base evacuation-center service exception."""
 
 
-class EvacuationValidationError(EvacuationServiceError):
+class EvacuationValidationError(
+    EvacuationServiceError
+):
     """Raised when submitted values are invalid."""
 
 
-class EvacuationDataIntegrityError(EvacuationServiceError):
+class EvacuationAuthorizationError(
+    EvacuationServiceError
+):
+    """Raised when the account lacks permission."""
+
+
+class EvacuationDataIntegrityError(
+    EvacuationServiceError
+):
     """Raised when inconsistent records are detected."""
 
 
-class NoActiveEventError(EvacuationServiceError):
+class DuplicateEvacuationSubmissionError(
+    EvacuationServiceError
+):
+    """Raised when the same occupancy form is submitted twice."""
+
+
+class NoActiveEventError(
+    EvacuationServiceError
+):
     """Raised when no active disaster event exists."""
 
 
-def list_active_evacuation_centers() -> list[dict[str, object]]:
-    """
-    Retrieve all active evacuation centers.
-    """
+def _require_permission(
+    session,
+    *,
+    user_id: int,
+    permission: str,
+):
+    user = fetch_app_user_by_id(
+        session,
+        user_id=user_id,
+    )
+
+    if user is None or not user.is_active:
+        raise EvacuationAuthorizationError(
+            "Your application account is not active."
+        )
+
+    if permission not in permissions_for_role(
+        user.role
+    ):
+        raise EvacuationAuthorizationError(
+            "Your account is not authorized "
+            "to perform this action."
+        )
+
+    return user
+
+
+def list_active_evacuation_centers(
+) -> list[dict[str, object]]:
     try:
         with SessionLocal() as session:
-            rows = fetch_active_evacuation_centers(session)
-
             return [
                 dict(row)
-                for row in rows
+                for row
+                in fetch_active_evacuation_centers(
+                    session
+                )
             ]
-
     except Exception as error:
         raise EvacuationServiceError(
             "Unable to retrieve evacuation centers."
@@ -55,10 +111,8 @@ def create_evacuation_center(
     barangay_id: int,
     address: str | None,
     safe_capacity: int,
+    actor_user_id: int,
 ) -> int:
-    """
-    Create a permanent evacuation-center master record.
-    """
     cleaned_name = name.strip()
 
     if not cleaned_name:
@@ -77,11 +131,18 @@ def create_evacuation_center(
         )
 
     with session_scope() as session:
+        _require_permission(
+            session,
+            user_id=actor_user_id,
+            permission=(
+                PERMISSION_MANAGE_EVACUATION_CENTERS
+            ),
+        )
+
         barangay = fetch_barangay_by_id(
             session,
             barangay_id,
         )
-
         if barangay is None:
             raise EvacuationValidationError(
                 "The selected barangay does not exist "
@@ -117,7 +178,7 @@ def create_evacuation_center(
         session.add(center)
         session.flush()
 
-        return center.id
+        return int(center.id)
 
 
 def create_evacuation_center_update(
@@ -137,12 +198,13 @@ def create_evacuation_center_update(
     sanitation_status: str,
     source: str,
     remarks: str | None,
+    submission_key: str,
+    submitter_user_id: int,
 ) -> int:
-    """
-    Save a new historical evacuation-center update.
-    """
     cleaned_source = source.strip()
-    cleaned_sanitation = sanitation_status.strip()
+    cleaned_sanitation = (
+        sanitation_status.strip()
+    )
 
     if center_id <= 0:
         raise EvacuationValidationError(
@@ -159,121 +221,169 @@ def create_evacuation_center_update(
             "Sanitation status is required."
         )
 
-    counts = {
-        "Families": families,
-        "Individuals": individuals,
-        "Children": children,
-        "Senior citizens": senior_citizens,
-        "PWD": pwd,
-        "Pregnant women": pregnant_women,
-        "Medical cases": medical_cases,
-    }
-
-    for label, value in counts.items():
-        if value < 0:
-            raise EvacuationValidationError(
-                f"{label} cannot be negative."
-            )
-
-    if individuals < families:
+    try:
+        canonical_key = validate_submission_key(
+            submission_key
+        )
+    except DataIntegrityValidationError as error:
         raise EvacuationValidationError(
-            "Individuals cannot be lower than families."
-        )
+            str(error)
+        ) from error
 
-    vulnerable_counts = {
-        "Children": children,
-        "Senior citizens": senior_citizens,
-        "PWD": pwd,
-        "Pregnant women": pregnant_women,
-        "Medical cases": medical_cases,
-    }
-
-    for label, value in vulnerable_counts.items():
-        if value > individuals:
-            raise EvacuationValidationError(
-                f"{label} cannot exceed the total "
-                "number of individuals."
+    try:
+        with session_scope() as session:
+            submitter = _require_permission(
+                session,
+                user_id=submitter_user_id,
+                permission=(
+                    PERMISSION_SUBMIT_EVACUATION_UPDATES
+                ),
             )
 
-    with session_scope() as session:
-        active_events = fetch_active_event_rows(session)
-
-        if len(active_events) > 1:
-            raise EvacuationDataIntegrityError(
-                "More than one active disaster event exists."
+            duplicate = (
+                fetch_evacuation_update_by_submission_key(
+                    session,
+                    submission_key=canonical_key,
+                )
             )
 
-        if not active_events:
-            raise NoActiveEventError(
-                "Create an active disaster event first."
+            if duplicate is not None:
+                raise (
+                    DuplicateEvacuationSubmissionError(
+                        "This evacuation report was "
+                        "already saved. The duplicate "
+                        "submission was ignored."
+                    )
+                )
+
+            active_events = fetch_active_event_rows(
+                session
             )
 
-        center = fetch_evacuation_center_by_id(
-            session,
-            center_id=center_id,
-        )
+            if len(active_events) > 1:
+                raise EvacuationDataIntegrityError(
+                    "More than one active disaster "
+                    "event exists."
+                )
 
-        if center is None:
-            raise EvacuationValidationError(
-                "The selected evacuation center does not "
-                "exist or is inactive."
+            if not active_events:
+                raise NoActiveEventError(
+                    "Create an active disaster event first."
+                )
+
+            center = fetch_evacuation_center_by_id(
+                session,
+                center_id=center_id,
             )
 
-        event_id = int(active_events[0]["id"])
+            if center is None:
+                raise EvacuationValidationError(
+                    "The selected evacuation center "
+                    "does not exist or is inactive."
+                )
 
-        update = EvacuationCenterUpdate(
-            event_id=event_id,
-            evacuation_center_id=center.id,
-            status=status,
-            families=families,
-            individuals=individuals,
-            children=children,
-            senior_citizens=senior_citizens,
-            pwd=pwd,
-            pregnant_women=pregnant_women,
-            medical_cases=medical_cases,
-            food_status=food_status,
-            water_status=water_status,
-            electricity_status=electricity_status,
-            sanitation_status=cleaned_sanitation,
-            source=cleaned_source,
-            validation_status="Submitted",
-            remarks=(
-                remarks.strip()
-                if remarks and remarks.strip()
-                else None
-            ),
-        )
+            try:
+                validate_evacuation_occupancy(
+                    status=status,
+                    families=families,
+                    individuals=individuals,
+                    children=children,
+                    senior_citizens=senior_citizens,
+                    pwd=pwd,
+                    pregnant_women=pregnant_women,
+                    medical_cases=medical_cases,
+                    safe_capacity=int(
+                        center.safe_capacity
+                    ),
+                )
+            except (
+                DataIntegrityValidationError
+            ) as error:
+                raise EvacuationValidationError(
+                    str(error)
+                ) from error
 
-        session.add(update)
-        session.flush()
+            event_id = int(
+                active_events[0]["id"]
+            )
 
-        return update.id
+            update = EvacuationCenterUpdate(
+                event_id=event_id,
+                evacuation_center_id=center.id,
+                submission_key=canonical_key,
+                submitted_by_user_id=(
+                    submitter.id
+                ),
+                submitted_by=(
+                    f"{submitter.display_name} — "
+                    f"{submitter.role}"
+                ),
+                status=status,
+                families=families,
+                individuals=individuals,
+                children=children,
+                senior_citizens=senior_citizens,
+                pwd=pwd,
+                pregnant_women=pregnant_women,
+                medical_cases=medical_cases,
+                food_status=food_status,
+                water_status=water_status,
+                electricity_status=(
+                    electricity_status
+                ),
+                sanitation_status=cleaned_sanitation,
+                source=cleaned_source,
+                validation_status="Submitted",
+                remarks=(
+                    remarks.strip()
+                    if remarks and remarks.strip()
+                    else None
+                ),
+            )
+
+            session.add(update)
+            session.flush()
+
+            return int(update.id)
+
+    except IntegrityError as error:
+        if (
+            "uq_evacuation_updates_submission_key"
+            in str(error.orig)
+        ):
+            raise (
+                DuplicateEvacuationSubmissionError(
+                    "This evacuation report was already "
+                    "saved. The duplicate submission "
+                    "was ignored."
+                )
+            ) from error
+        raise
 
 
 def get_recent_evacuation_updates(
     *,
     limit: int = 20,
 ) -> list[dict[str, object]]:
-    """
-    Retrieve recent center updates for the active event.
-    """
     with SessionLocal() as session:
-        active_events = fetch_active_event_rows(session)
+        active_events = fetch_active_event_rows(
+            session
+        )
 
         if len(active_events) > 1:
             raise EvacuationDataIntegrityError(
-                "More than one active disaster event exists."
+                "More than one active disaster "
+                "event exists."
             )
 
         if not active_events:
             return []
 
-        event_id = int(active_events[0]["id"])
-
         rows = fetch_recent_evacuation_center_updates(
             session,
-            event_id=event_id,
+            event_id=int(
+                active_events[0]["id"]
+            ),
             limit=limit,
         )
 

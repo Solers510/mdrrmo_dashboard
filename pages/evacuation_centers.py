@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pandas as pd
 import streamlit as st
 
@@ -223,6 +225,7 @@ with manage_tab:
                     barangay_id=selected_barangay_id,
                     address=address,
                     safe_capacity=int(safe_capacity),
+                    actor_user_id=current_user.id,
                 )
 
             except EvacuationValidationError as error:
@@ -303,7 +306,24 @@ with update_tab:
             center_label_to_id.keys()
         )
 
-        with st.form("evacuation_update_form"):
+        evacuation_update_form_nonce = int(
+            st.session_state.setdefault(
+                "evacuation_update_form_nonce",
+                0,
+            )
+        )
+
+        evacuation_submission_state_key = (
+            f"evacuation_submission_key_{evacuation_update_form_nonce}"
+        )
+
+        if evacuation_submission_state_key not in st.session_state:
+            st.session_state[evacuation_submission_state_key] = str(uuid4())
+
+        with st.form(
+            f"evacuation_update_form_{evacuation_update_form_nonce}",
+            clear_on_submit=False,
+        ):
             selected_center_label = st.selectbox(
                 "Evacuation center *",
                 options=center_labels,
@@ -471,6 +491,10 @@ with update_tab:
                             ),
                             source=source,
                             remarks=remarks,
+                            submission_key=st.session_state[
+                                evacuation_submission_state_key
+                            ],
+                            submitter_user_id=current_user.id,
                         )
                     )
 
@@ -492,6 +516,15 @@ with update_tab:
                     st.exception(error)
 
                 else:
+                    st.session_state[
+                        "evacuation_update_form_nonce"
+                    ] = evacuation_update_form_nonce + 1
+
+                    st.session_state.pop(
+                        evacuation_submission_state_key,
+                        None,
+                    )
+
                     st.session_state[
                         "evacuation_success"
                     ] = (

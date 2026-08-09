@@ -8,6 +8,7 @@ from database.models import (
     DisasterEvent,
     EvacuationCenter,
     EvacuationCenterUpdate,
+    EventChangeHistory,
     AppUser,
 )
 def fetch_active_event_rows(session: Session):
@@ -22,12 +23,16 @@ def fetch_active_event_rows(session: Session):
             DisasterEvent.id,
             DisasterEvent.event_name,
             DisasterEvent.hazard_type,
+            DisasterEvent.classification,
             DisasterEvent.eoc_status,
             DisasterEvent.current_sitrep_number,
             DisasterEvent.official_reference,
             DisasterEvent.situation_overview,
             DisasterEvent.started_at,
+            DisasterEvent.ended_at,
+            DisasterEvent.is_active,
             DisasterEvent.created_at,
+            DisasterEvent.updated_at,
             AlertLevel.id.label("alert_level_id"),
             AlertLevel.code.label("alert_code"),
             AlertLevel.name.label("alert_name"),
@@ -691,3 +696,259 @@ def fetch_all_app_users(
     )
 
     return session.scalars(statement).all()
+
+def fetch_event_by_id(
+    session: Session,
+    *,
+    event_id: int,
+    for_update: bool = False,
+) -> DisasterEvent | None:
+    statement = select(
+        DisasterEvent
+    ).where(
+        DisasterEvent.id == event_id
+    )
+
+    if for_update:
+        statement = (
+            statement.with_for_update()
+        )
+
+    return session.scalar(
+        statement
+    )
+
+
+def fetch_recent_events(
+    session: Session,
+    *,
+    limit: int = 20,
+):
+    statement = (
+        select(
+            DisasterEvent.id,
+            DisasterEvent.event_name,
+            DisasterEvent.hazard_type,
+            DisasterEvent.classification,
+            DisasterEvent.eoc_status,
+            DisasterEvent.current_sitrep_number,
+            DisasterEvent.official_reference,
+            DisasterEvent.situation_overview,
+            DisasterEvent.started_at,
+            DisasterEvent.ended_at,
+            DisasterEvent.is_active,
+            AlertLevel.code.label(
+                "alert_code"
+            ),
+            AlertLevel.name.label(
+                "alert_name"
+            ),
+        )
+        .join(
+            AlertLevel,
+            AlertLevel.id
+            == DisasterEvent.current_alert_level_id,
+        )
+        .order_by(
+            DisasterEvent.started_at.desc(),
+            DisasterEvent.id.desc(),
+        )
+        .limit(limit)
+    )
+
+    return session.execute(
+        statement
+    ).mappings().all()
+
+
+def fetch_event_change_history(
+    session: Session,
+    *,
+    event_id: int,
+    limit: int = 100,
+):
+    statement = (
+        select(
+            EventChangeHistory.id,
+            EventChangeHistory.event_id,
+            EventChangeHistory.change_type,
+            EventChangeHistory.field_name,
+            EventChangeHistory.previous_value,
+            EventChangeHistory.new_value,
+            EventChangeHistory.reason,
+            EventChangeHistory.authority_reference,
+            EventChangeHistory.changed_by_user_id,
+            EventChangeHistory.changed_by,
+            EventChangeHistory.effective_at,
+            EventChangeHistory.created_at,
+        )
+        .where(
+            EventChangeHistory.event_id
+            == event_id
+        )
+        .order_by(
+            EventChangeHistory.effective_at.desc(),
+            EventChangeHistory.id.desc(),
+        )
+        .limit(limit)
+    )
+
+    return session.execute(
+        statement
+    ).mappings().all()
+
+
+def fetch_barangay_update_by_submission_key(
+    session: Session,
+    *,
+    submission_key: str,
+) -> BarangayUpdate | None:
+    return session.scalar(
+        select(
+            BarangayUpdate
+        ).where(
+            BarangayUpdate.submission_key
+            == submission_key
+        )
+    )
+
+
+def fetch_evacuation_update_by_submission_key(
+    session: Session,
+    *,
+    submission_key: str,
+) -> EvacuationCenterUpdate | None:
+    return session.scalar(
+        select(
+            EvacuationCenterUpdate
+        ).where(
+            EvacuationCenterUpdate.submission_key
+            == submission_key
+        )
+    )
+
+
+def fetch_latest_barangay_update_for_barangay(
+    session: Session,
+    *,
+    event_id: int,
+    barangay_id: int,
+    included_statuses: tuple[str, ...] | None = None,
+) -> BarangayUpdate | None:
+    filters = [
+        BarangayUpdate.event_id
+        == event_id,
+        BarangayUpdate.barangay_id
+        == barangay_id,
+    ]
+
+    if included_statuses is not None:
+        filters.append(
+            BarangayUpdate.validation_status.in_(
+                included_statuses
+            )
+        )
+
+    statement = (
+        select(
+            BarangayUpdate
+        )
+        .where(
+            *filters
+        )
+        .order_by(
+            BarangayUpdate.recorded_at.desc(),
+            BarangayUpdate.id.desc(),
+        )
+        .limit(1)
+    )
+
+    return session.scalar(
+        statement
+    )
+
+
+def fetch_latest_evacuation_updates_for_barangay(
+    session: Session,
+    *,
+    event_id: int,
+    barangay_id: int,
+    included_statuses: tuple[str, ...] | None = None,
+):
+    filters = [
+        EvacuationCenterUpdate.event_id
+        == event_id,
+        EvacuationCenter.barangay_id
+        == barangay_id,
+    ]
+
+    if included_statuses is not None:
+        filters.append(
+            EvacuationCenterUpdate.validation_status.in_(
+                included_statuses
+            )
+        )
+
+    ranked_updates = (
+        select(
+            EvacuationCenterUpdate.id.label(
+                "id"
+            ),
+            EvacuationCenterUpdate.evacuation_center_id.label(
+                "evacuation_center_id"
+            ),
+            EvacuationCenterUpdate.status.label(
+                "status"
+            ),
+            EvacuationCenterUpdate.families.label(
+                "families"
+            ),
+            EvacuationCenterUpdate.individuals.label(
+                "individuals"
+            ),
+            EvacuationCenterUpdate.recorded_at.label(
+                "recorded_at"
+            ),
+            func.row_number()
+            .over(
+                partition_by=(
+                    EvacuationCenterUpdate.evacuation_center_id
+                ),
+                order_by=(
+                    EvacuationCenterUpdate.recorded_at.desc(),
+                    EvacuationCenterUpdate.id.desc(),
+                ),
+            )
+            .label(
+                "row_rank"
+            ),
+        )
+        .join(
+            EvacuationCenter,
+            EvacuationCenter.id
+            == EvacuationCenterUpdate.evacuation_center_id,
+        )
+        .where(
+            *filters
+        )
+        .subquery()
+    )
+
+    statement = (
+        select(
+            ranked_updates.c.id,
+            ranked_updates.c.evacuation_center_id,
+            ranked_updates.c.status,
+            ranked_updates.c.families,
+            ranked_updates.c.individuals,
+            ranked_updates.c.recorded_at,
+        )
+        .where(
+            ranked_updates.c.row_rank
+            == 1
+        )
+    )
+
+    return session.execute(
+        statement
+    ).mappings().all()
