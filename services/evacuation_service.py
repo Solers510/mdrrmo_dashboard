@@ -1,4 +1,5 @@
 from sqlalchemy.exc import IntegrityError
+from services.audit_context import set_audit_actor
 
 from config.access_control import (
     PERMISSION_MANAGE_EVACUATION_CENTERS,
@@ -86,9 +87,14 @@ def _require_permission(
             "to perform this action."
         )
 
+    set_audit_actor(
+        session,
+        user_id=int(user.id),
+        display_name=str(user.display_name),
+        role=str(user.role),
+    )
+
     return user
-
-
 def list_active_evacuation_centers(
 ) -> list[dict[str, object]]:
     try:

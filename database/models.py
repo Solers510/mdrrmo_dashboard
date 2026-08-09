@@ -1510,6 +1510,40 @@ class ReportSnapshot(Base):
     )
 
 
+class SystemAuditLog(Base):
+    """Append-only row-change audit trail maintained by PostgreSQL triggers."""
+
+    __tablename__ = "system_audit_log"
+
+    __table_args__ = (
+        CheckConstraint(
+            "operation IN ('INSERT', 'UPDATE', 'DELETE')",
+            name="ck_system_audit_log_operation",
+        ),
+        Index(
+            "ix_system_audit_log_occurred_at",
+            "occurred_at",
+        ),
+        Index(
+            "ix_system_audit_log_table_name",
+            "table_name",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    table_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    operation: Mapped[str] = mapped_column(String(10), nullable=False)
+    record_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    actor_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    old_data: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    new_data: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class AppUser(Base):
     """
     An authorized MDRRMO dashboard user.

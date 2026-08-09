@@ -1,4 +1,5 @@
 from datetime import datetime
+from services.audit_context import set_audit_actor
 from zoneinfo import ZoneInfo
 
 from config.access_control import (
@@ -128,9 +129,14 @@ def _require_manager(
             "Your account is not authorized to manage response resources."
         )
 
+    set_audit_actor(
+        session,
+        user_id=int(user.id),
+        display_name=str(user.display_name),
+        role=str(user.role),
+    )
+
     return user
-
-
 def _snapshot(user) -> str:
     return f"{user.display_name} — {user.role}"
 

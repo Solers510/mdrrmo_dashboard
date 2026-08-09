@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
+from utils.error_handling import log_exception
 
 from config.constants import (
     ELECTRICITY_STATUSES,
@@ -82,7 +83,7 @@ except Exception as error:
     st.error(
         "The active disaster event could not be loaded."
     )
-    st.exception(error)
+    st.caption(f"Error reference: {log_exception("Evacuation Centers", error)}")
     st.stop()
 
 
@@ -249,8 +250,7 @@ with manage_tab:
                 st.error(
                     "An unexpected database error occurred."
                 )
-                st.exception(error)
-
+                st.caption(f"Error reference: {log_exception("Evacuation Centers", error)}")
             else:
                 st.session_state[
                     "evacuation_success"
@@ -524,8 +524,7 @@ with update_tab:
                         "An unexpected database error "
                         "occurred."
                     )
-                    st.exception(error)
-
+                    st.caption(f"Error reference: {log_exception("Evacuation Centers", error)}")
                 else:
                     st.session_state[
                         "evacuation_update_form_nonce"

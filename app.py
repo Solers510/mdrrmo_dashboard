@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 
 from config.access_control import (
     PERMISSION_MANAGE_EVENTS,
@@ -67,6 +67,10 @@ user_admin_page = st.Page(
     "pages/user_admin.py",
     title="User Administration",
 )
+system_admin_page = st.Page(
+    "pages/system_admin.py",
+    title="System Health & Audit",
+)
 
 
 operations_pages = []
@@ -109,7 +113,7 @@ if has_permission(current_user, PERMISSION_VIEW_REPORTS):
     navigation_sections["Reporting"] = [reports_page]
 
 if has_permission(current_user, PERMISSION_MANAGE_USERS):
-    navigation_sections["Administration"] = [user_admin_page]
+    navigation_sections["Administration"] = [user_admin_page, system_admin_page]
 
 if not navigation_sections:
     st.error("Your role has no assigned application pages.")
