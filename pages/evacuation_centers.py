@@ -24,7 +24,17 @@ from services.evacuation_service import (
     get_recent_evacuation_updates,
     list_active_evacuation_centers,
 )
+from config.access_control import (
+    PERMISSION_MANAGE_EVACUATION_CENTERS,
+    PERMISSION_SUBMIT_EVACUATION_UPDATES,
+)
+from utils.auth import require_any_permission
 
+
+current_user = require_any_permission(
+    PERMISSION_MANAGE_EVACUATION_CENTERS,
+    PERMISSION_SUBMIT_EVACUATION_UPDATES,
+)
 
 st.title("Evacuation Center Monitoring")
 

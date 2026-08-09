@@ -13,7 +13,15 @@ from services.event_service import (
     get_active_event_summary,
     list_alert_levels,
 )
+from config.access_control import (
+    PERMISSION_MANAGE_EVENTS,
+)
+from utils.auth import require_permission
 
+
+current_user = require_permission(
+    PERMISSION_MANAGE_EVENTS
+)
 
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 

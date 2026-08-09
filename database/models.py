@@ -932,3 +932,72 @@ class Incident(Base):
         nullable=False,
         server_default=func.now(),
     )
+class AppUser(Base):
+    """
+    An authorized MDRRMO dashboard user.
+
+    Authentication is handled by the external OIDC provider.
+    This table controls application authorization.
+    """
+
+    __tablename__ = "app_users"
+
+    __table_args__ = (
+        CheckConstraint(
+            """
+            role IN (
+                'Viewer',
+                'Executive',
+                'Encoder',
+                'Validator',
+                'Operations Officer',
+                'Administrator'
+            )
+            """,
+            name="ck_app_users_role",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    email: Mapped[str] = mapped_column(
+        String(320),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    display_name: Mapped[str] = mapped_column(
+        String(150),
+        nullable=False,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="Viewer",
+        server_default="Viewer",
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )

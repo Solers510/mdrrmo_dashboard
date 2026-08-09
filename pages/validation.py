@@ -16,7 +16,15 @@ from services.validation_service import (
     get_barangay_validation_queue,
     review_barangay_update,
 )
+from config.access_control import (
+    PERMISSION_VALIDATE_BARANGAY_REPORTS,
+)
+from utils.auth import require_permission
 
+
+current_user = require_permission(
+    PERMISSION_VALIDATE_BARANGAY_REPORTS
+)
 
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 

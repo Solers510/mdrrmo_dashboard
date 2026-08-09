@@ -33,3 +33,5 @@ backups/*
 # Windows files
 Thumbs.db
 Desktop.ini
+
+.streamlit/secrets.toml

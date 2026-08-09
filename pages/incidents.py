@@ -1,5 +1,13 @@
 import streamlit as st
+from config.access_control import (
+    PERMISSION_MANAGE_INCIDENTS,
+)
+from utils.auth import require_permission
 
+
+current_user = require_permission(
+    PERMISSION_MANAGE_INCIDENTS
+)
 
 st.title("Incident Monitoring")
 

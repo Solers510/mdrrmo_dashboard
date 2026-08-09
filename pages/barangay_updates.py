@@ -20,7 +20,15 @@ from services.event_service import (
     EventDataIntegrityError,
     get_active_event_summary,
 )
+from config.access_control import (
+    PERMISSION_SUBMIT_BARANGAY_UPDATES,
+)
+from utils.auth import require_permission
 
+
+current_user = require_permission(
+    PERMISSION_SUBMIT_BARANGAY_UPDATES
+)
 
 st.title("Barangay Situation Update")
 

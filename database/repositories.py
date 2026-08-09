@@ -7,7 +7,7 @@ from database.models import (
     BarangayUpdate,
     DisasterEvent,
     EvacuationCenter,
-    EvacuationCenterUpdate,
+    EvacuationCenterUpdate,AppUser
 )
 def fetch_active_event_rows(session: Session):
     """
@@ -627,3 +627,34 @@ def fetch_latest_evacuation_updates_for_event(
     )
 
     return session.execute(statement).mappings().all()
+def fetch_app_user_by_email(
+    session: Session,
+    *,
+    email: str,
+) -> AppUser | None:
+    """
+    Retrieve an application user by normalized email.
+    """
+    normalized_email = email.strip().lower()
+
+    statement = select(AppUser).where(
+        func.lower(AppUser.email)
+        == normalized_email
+    )
+
+    return session.scalar(statement)
+
+
+def fetch_app_user_by_id(
+    session: Session,
+    *,
+    user_id: int,
+) -> AppUser | None:
+    """
+    Retrieve an application user by database ID.
+    """
+    statement = select(AppUser).where(
+        AppUser.id == user_id
+    )
+
+    return session.scalar(statement)

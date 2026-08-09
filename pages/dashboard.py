@@ -11,7 +11,15 @@ from services.dashboard_service import (
     DashboardServiceError,
     get_dashboard_bundle,
 )
+from config.access_control import (
+    PERMISSION_VIEW_DASHBOARD,
+)
+from utils.auth import require_permission
 
+
+current_user = require_permission(
+    PERMISSION_VIEW_DASHBOARD
+)
 
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 

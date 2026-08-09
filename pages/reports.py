@@ -1,5 +1,13 @@
 import streamlit as st
+from config.access_control import (
+    PERMISSION_VIEW_REPORTS,
+)
+from utils.auth import require_permission
 
+
+current_user = require_permission(
+    PERMISSION_VIEW_REPORTS
+)
 
 st.title("Reports and Exports")
 
