@@ -452,6 +452,14 @@ class BarangayUpdate(Base):
         default="Submitted",
         server_default="Submitted",
     )
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "app_users.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
     reviewed_by: Mapped[str | None] = mapped_column(
         String(150),
         nullable=True,

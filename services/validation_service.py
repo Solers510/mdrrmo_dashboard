@@ -1,9 +1,17 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from database.connection import SessionLocal, session_scope
+from config.access_control import (
+    PERMISSION_VALIDATE_BARANGAY_REPORTS,
+    permissions_for_role,
+)
+from database.connection import (
+    SessionLocal,
+    session_scope,
+)
 from database.repositories import (
     fetch_active_event_rows,
+    fetch_app_user_by_id,
     fetch_barangay_update_for_review,
     fetch_barangay_validation_queue,
 )
@@ -20,17 +28,28 @@ class ValidationInputError(ValidationServiceError):
     """Raised when review information is invalid."""
 
 
-class ValidationDataIntegrityError(ValidationServiceError):
+class ValidationAuthorizationError(
+    ValidationServiceError
+):
+    """Raised when the reviewer lacks authorization."""
+
+
+class ValidationDataIntegrityError(
+    ValidationServiceError
+):
     """Raised when operational data is inconsistent."""
 
 
-class ReportAlreadyReviewedError(ValidationServiceError):
-    """Raised when the report is no longer pending review."""
+class ReportAlreadyReviewedError(
+    ValidationServiceError
+):
+    """Raised when a report is no longer pending."""
 
 
-def get_barangay_validation_queue() -> list[dict[str, object]]:
+def get_barangay_validation_queue(
+) -> list[dict[str, object]]:
     """
-    Retrieve submitted barangay reports for the active event.
+    Retrieve submitted reports for the active event.
     """
     try:
         with SessionLocal() as session:
@@ -40,7 +59,8 @@ def get_barangay_validation_queue() -> list[dict[str, object]]:
 
             if len(active_events) > 1:
                 raise ValidationDataIntegrityError(
-                    "More than one active disaster event exists."
+                    "More than one active disaster "
+                    "event exists."
                 )
 
             if not active_events:
@@ -73,21 +93,13 @@ def review_barangay_update(
     *,
     update_id: int,
     decision: str,
-    reviewed_by: str,
+    reviewer_user_id: int,
     review_notes: str | None,
 ) -> None:
     """
-    Mark a submitted report as Validated or
-    Needs Correction.
+    Review a barangay report using an authenticated
+    application-user identity.
     """
-    cleaned_reviewer = reviewed_by.strip()
-
-    cleaned_notes = (
-        review_notes.strip()
-        if review_notes and review_notes.strip()
-        else None
-    )
-
     allowed_decisions = {
         "Validated",
         "Needs Correction",
@@ -98,33 +110,79 @@ def review_barangay_update(
             "A valid report must be selected."
         )
 
+    if reviewer_user_id <= 0:
+        raise ValidationAuthorizationError(
+            "A valid reviewer identity is required."
+        )
+
     if decision not in allowed_decisions:
         raise ValidationInputError(
             "The selected review decision is invalid."
         )
 
-    if not cleaned_reviewer:
-        raise ValidationInputError(
-            "Reviewer name is required."
-        )
+    cleaned_notes = (
+        review_notes.strip()
+        if review_notes
+        and review_notes.strip()
+        else None
+    )
 
     if (
         decision == "Needs Correction"
         and not cleaned_notes
     ):
         raise ValidationInputError(
-            "Correction instructions are required when "
-            "marking a report as Needs Correction."
+            "Correction instructions are required "
+            "when marking a report as Needs Correction."
         )
 
     with session_scope() as session:
+        # -------------------------------------------------
+        # VERIFY REVIEWER
+        # -------------------------------------------------
+
+        reviewer = fetch_app_user_by_id(
+            session,
+            user_id=reviewer_user_id,
+        )
+
+        if reviewer is None:
+            raise ValidationAuthorizationError(
+                "The reviewer account does not exist."
+            )
+
+        if not reviewer.is_active:
+            raise ValidationAuthorizationError(
+                "The reviewer account is inactive."
+            )
+
+        reviewer_permissions = (
+            permissions_for_role(
+                reviewer.role
+            )
+        )
+
+        if (
+            PERMISSION_VALIDATE_BARANGAY_REPORTS
+            not in reviewer_permissions
+        ):
+            raise ValidationAuthorizationError(
+                "This account is not authorized "
+                "to validate barangay reports."
+            )
+
+        # -------------------------------------------------
+        # VERIFY EVENT
+        # -------------------------------------------------
+
         active_events = fetch_active_event_rows(
             session
         )
 
         if len(active_events) > 1:
             raise ValidationDataIntegrityError(
-                "More than one active disaster event exists."
+                "More than one active disaster "
+                "event exists."
             )
 
         if not active_events:
@@ -136,6 +194,10 @@ def review_barangay_update(
             active_events[0]["id"]
         )
 
+        # -------------------------------------------------
+        # LOCK AND VERIFY REPORT
+        # -------------------------------------------------
+
         report = fetch_barangay_update_for_review(
             session,
             update_id=update_id,
@@ -143,31 +205,41 @@ def review_barangay_update(
 
         if report is None:
             raise ValidationInputError(
-                "The selected barangay report does not exist."
+                "The selected barangay report "
+                "does not exist."
             )
 
         if report.event_id != active_event_id:
             raise ValidationInputError(
-                "The selected report does not belong to "
-                "the active disaster event."
+                "The selected report does not belong "
+                "to the active disaster event."
             )
 
-        allowed_current_statuses = {
+        if report.validation_status not in {
             "Submitted",
             "For Validation",
-        }
-
-        if (
-            report.validation_status
-            not in allowed_current_statuses
-        ):
+        }:
             raise ReportAlreadyReviewedError(
                 "This report has already been reviewed."
             )
 
+        # -------------------------------------------------
+        # SAVE AUTHENTICATED REVIEW
+        # -------------------------------------------------
+
         report.validation_status = decision
-        report.reviewed_by = cleaned_reviewer
+
+        report.reviewed_by_user_id = (
+            reviewer.id
+        )
+
+        report.reviewed_by = (
+            f"{reviewer.display_name} — "
+            f"{reviewer.role}"
+        )
+
         report.review_notes = cleaned_notes
+
         report.reviewed_at = datetime.now(
             MANILA_TIMEZONE
         )

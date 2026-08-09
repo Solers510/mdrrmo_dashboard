@@ -658,3 +658,19 @@ def fetch_app_user_by_id(
     )
 
     return session.scalar(statement)
+def fetch_all_app_users(
+    session: Session,
+):
+    """
+    Retrieve all application users.
+    """
+    statement = (
+        select(AppUser)
+        .order_by(
+            AppUser.is_active.desc(),
+            AppUser.display_name.asc(),
+            AppUser.email.asc(),
+        )
+    )
+
+    return session.scalars(statement).all()

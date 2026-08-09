@@ -10,6 +10,7 @@ from services.event_service import (
 )
 from services.validation_service import (
     ReportAlreadyReviewedError,
+    ValidationAuthorizationError,
     ValidationDataIntegrityError,
     ValidationInputError,
     ValidationServiceError,
@@ -366,13 +367,17 @@ with st.form(
         ),
         horizontal=True,
     )
+    st.markdown("### Reviewer")
 
-    reviewed_by = st.text_input(
-        "Reviewer name and position *",
-        placeholder=(
-            "Example: Juan Dela Cruz — Duty Officer"
-        ),
+    st.info(
+        f"{current_user.display_name} "
+        f"— {current_user.role}"
     )
+    st.caption(
+        "Reviewer identity is taken automatically "
+        "from the authenticated account."
+    )
+
 
     review_notes = st.text_area(
         "Review notes",
@@ -405,11 +410,9 @@ if submitted:
     else:
         try:
             review_barangay_update(
-                update_id=int(
-                    selected_report_id
-                ),
+                update_id=int(selected_report_id),
                 decision=decision,
-                reviewed_by=reviewed_by,
+                reviewer_user_id=current_user.id,
                 review_notes=review_notes,
             )
 
@@ -423,6 +426,9 @@ if submitted:
             st.error(str(error))
 
         except ValidationServiceError as error:
+            st.error(str(error))
+
+        except ValidationAuthorizationError as error:
             st.error(str(error))
 
         except Exception as error:
