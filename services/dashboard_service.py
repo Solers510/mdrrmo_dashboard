@@ -9,6 +9,10 @@ from database.repositories import (
     fetch_latest_barangay_updates_for_event,
     fetch_latest_evacuation_updates_for_event,
 )
+from services.validation_service import (
+    ValidationServiceError,
+    get_population_reconciliation_queue,
+)
 
 
 class DashboardServiceError(Exception):
@@ -27,9 +31,6 @@ PROVISIONAL_USABLE_STATUSES = {
 
 
 def _safe_int(value: Any) -> int:
-    """
-    Convert database numeric values to integers safely.
-    """
     if value is None:
         return 0
 
@@ -39,16 +40,49 @@ def _safe_int(value: Any) -> int:
     return int(value)
 
 
+def _status_counts(
+    rows: list[dict[str, object]],
+) -> dict[str, int]:
+    counts = {
+        "Submitted": 0,
+        "For Validation": 0,
+        "Validated": 0,
+        "Needs Correction": 0,
+        "Superseded": 0,
+        "Other": 0,
+    }
+
+    for row in rows:
+        status = str(row["validation_status"])
+        if status in counts:
+            counts[status] += 1
+        else:
+            counts["Other"] += 1
+
+    return counts
+
+
+def _timestamps(
+    rows: list[dict[str, object]],
+) -> tuple[datetime | None, datetime | None]:
+    values = [
+        row["recorded_at"]
+        for row in rows
+        if row.get("recorded_at") is not None
+    ]
+
+    if not values:
+        return None, None
+
+    return max(values), min(values)
+
+
 def _build_summary(
     *,
     rows: list[dict[str, object]],
     total_barangays: int,
     usable_statuses: set[str],
 ) -> dict[str, object]:
-    """
-    Calculate barangay dashboard totals using only
-    records with allowed validation statuses.
-    """
     usable_rows = [
         row
         for row in rows
@@ -70,7 +104,6 @@ def _build_summary(
         _safe_int(row["affected_families"])
         for row in usable_rows
     )
-
     affected_individuals = sum(
         _safe_int(row["affected_individuals"])
         for row in usable_rows
@@ -80,7 +113,6 @@ def _build_summary(
         _safe_int(row["inside_ec_families"])
         for row in usable_rows
     )
-
     inside_ec_individuals = sum(
         _safe_int(row["inside_ec_individuals"])
         for row in usable_rows
@@ -90,10 +122,42 @@ def _build_summary(
         _safe_int(row["outside_ec_families"])
         for row in usable_rows
     )
-
     outside_ec_individuals = sum(
         _safe_int(row["outside_ec_individuals"])
         for row in usable_rows
+    )
+
+    displaced_families = (
+        inside_ec_families
+        + outside_ec_families
+    )
+    displaced_individuals = (
+        inside_ec_individuals
+        + outside_ec_individuals
+    )
+
+    affected_not_displaced_families = (
+        affected_families
+        - displaced_families
+    )
+    affected_not_displaced_individuals = (
+        affected_individuals
+        - displaced_individuals
+    )
+
+    population_consistency_issues = sum(
+        1
+        for row in usable_rows
+        if (
+            _safe_int(row["inside_ec_families"])
+            + _safe_int(row["outside_ec_families"])
+            > _safe_int(row["affected_families"])
+            or (
+                _safe_int(row["inside_ec_individuals"])
+                + _safe_int(row["outside_ec_individuals"])
+                > _safe_int(row["affected_individuals"])
+            )
+        )
     )
 
     pending_rescue_requests = sum(
@@ -119,29 +183,22 @@ def _build_summary(
         if row["water_status"] == "Interrupted"
     )
 
-    needs_correction = sum(
-        1
-        for row in rows
-        if row["validation_status"] == "Needs Correction"
-    )
-
-    timestamps = [
-        row["recorded_at"]
-        for row in rows
-        if row["recorded_at"] is not None
-    ]
-
-    latest_update: datetime | None = (
-        max(timestamps)
-        if timestamps
-        else None
+    status_counts = _status_counts(rows)
+    latest_update, oldest_current_update = _timestamps(
+        usable_rows
     )
 
     reports_received = len(rows)
-
+    usable_reports = len(usable_rows)
     missing_reports = max(
         total_barangays - reports_received,
         0,
+    )
+
+    coverage_percent = (
+        (reports_received / total_barangays) * 100
+        if total_barangays > 0
+        else 0.0
     )
 
     return {
@@ -152,16 +209,35 @@ def _build_summary(
         "inside_ec_individuals": inside_ec_individuals,
         "outside_ec_families": outside_ec_families,
         "outside_ec_individuals": outside_ec_individuals,
+        "displaced_families": displaced_families,
+        "displaced_individuals": displaced_individuals,
+        "affected_not_displaced_families": (
+            affected_not_displaced_families
+        ),
+        "affected_not_displaced_individuals": (
+            affected_not_displaced_individuals
+        ),
+        "population_consistency_issues": (
+            population_consistency_issues
+        ),
         "pending_rescue_requests": pending_rescue_requests,
         "impassable_roads": impassable_roads,
         "interrupted_power": interrupted_power,
         "interrupted_water": interrupted_water,
         "reports_received": reports_received,
-        "usable_reports": len(usable_rows),
+        "usable_reports": usable_reports,
         "missing_reports": missing_reports,
-        "needs_correction": needs_correction,
+        "coverage_percent": coverage_percent,
+        "needs_correction": status_counts["Needs Correction"],
+        "pending_validation": (
+            status_counts["Submitted"]
+            + status_counts["For Validation"]
+        ),
+        "validated_reports": status_counts["Validated"],
+        "status_counts": status_counts,
         "total_barangays": total_barangays,
         "latest_update": latest_update,
+        "oldest_current_update": oldest_current_update,
     }
 
 
@@ -170,10 +246,6 @@ def _build_evacuation_summary(
     rows: list[dict[str, object]],
     usable_statuses: set[str],
 ) -> dict[str, object]:
-    """
-    Calculate current evacuation-center totals using only
-    records with allowed validation statuses.
-    """
     usable_rows = [
         row
         for row in rows
@@ -186,93 +258,102 @@ def _build_evacuation_summary(
         "Over Capacity",
     }
 
-    open_centers = sum(
-        1
+    operational_rows = [
+        row
         for row in usable_rows
         if row["status"] in operational_statuses
+    ]
+
+    open_centers = len(operational_rows)
+    full_centers = sum(
+        1
+        for row in operational_rows
+        if row["status"] == "Full"
+    )
+    over_capacity_centers = sum(
+        1
+        for row in operational_rows
+        if row["status"] == "Over Capacity"
     )
 
     families = sum(
         _safe_int(row["families"])
-        for row in usable_rows
+        for row in operational_rows
     )
-
     individuals = sum(
         _safe_int(row["individuals"])
-        for row in usable_rows
+        for row in operational_rows
+    )
+
+    safe_capacity = sum(
+        max(_safe_int(row.get("safe_capacity")), 0)
+        for row in operational_rows
+    )
+
+    capacity_utilization_percent = (
+        (individuals / safe_capacity) * 100
+        if safe_capacity > 0
+        else 0.0
     )
 
     children = sum(
         _safe_int(row["children"])
-        for row in usable_rows
+        for row in operational_rows
     )
-
     senior_citizens = sum(
         _safe_int(row["senior_citizens"])
-        for row in usable_rows
+        for row in operational_rows
     )
-
     pwd = sum(
         _safe_int(row["pwd"])
-        for row in usable_rows
+        for row in operational_rows
     )
-
     pregnant_women = sum(
         _safe_int(row["pregnant_women"])
-        for row in usable_rows
+        for row in operational_rows
     )
-
     medical_cases = sum(
         _safe_int(row["medical_cases"])
-        for row in usable_rows
+        for row in operational_rows
     )
 
     critical_food = sum(
         1
-        for row in usable_rows
+        for row in operational_rows
         if row["food_status"] in {
             "Critical",
             "Unavailable",
         }
     )
-
     critical_water = sum(
         1
-        for row in usable_rows
+        for row in operational_rows
         if row["water_status"] in {
             "Critical",
             "Unavailable",
         }
     )
-
     unavailable_electricity = sum(
         1
-        for row in usable_rows
+        for row in operational_rows
         if row["electricity_status"] == "Unavailable"
     )
 
-    needs_correction = sum(
-        1
-        for row in rows
-        if row["validation_status"] == "Needs Correction"
+    latest_update, oldest_current_update = _timestamps(
+        usable_rows
     )
-
-    timestamps = [
-        row["recorded_at"]
-        for row in rows
-        if row["recorded_at"] is not None
-    ]
-
-    latest_update: datetime | None = (
-        max(timestamps)
-        if timestamps
-        else None
-    )
+    status_counts = _status_counts(rows)
 
     return {
         "open_centers": open_centers,
+        "full_centers": full_centers,
+        "over_capacity_centers": over_capacity_centers,
         "families": families,
         "individuals": individuals,
+        "safe_capacity": safe_capacity,
+        "capacity_utilization_percent": (
+            capacity_utilization_percent
+        ),
         "children": children,
         "senior_citizens": senior_citizens,
         "pwd": pwd,
@@ -283,19 +364,67 @@ def _build_evacuation_summary(
         "unavailable_electricity": unavailable_electricity,
         "reports_received": len(rows),
         "reports_included": len(usable_rows),
-        "needs_correction": needs_correction,
+        "needs_correction": status_counts["Needs Correction"],
+        "pending_validation": (
+            status_counts["Submitted"]
+            + status_counts["For Validation"]
+        ),
+        "validated_reports": status_counts["Validated"],
+        "status_counts": status_counts,
         "latest_update": latest_update,
+        "oldest_current_update": oldest_current_update,
     }
+
+
+def _build_reconciliation_summary(
+    rows: list[dict[str, object]],
+) -> dict[str, int]:
+    counts = {
+        "match": 0,
+        "mismatch": 0,
+        "missing_source": 0,
+        "allocation_conflict": 0,
+        "no_current_data": 0,
+    }
+
+    for row in rows:
+        status = str(
+            row.get(
+                "reconciliation_status",
+                "No Current Data",
+            )
+        )
+
+        if status == "Match":
+            counts["match"] += 1
+        elif status == "Mismatch":
+            counts["mismatch"] += 1
+        elif status == "Allocation Conflict":
+            counts["allocation_conflict"] += 1
+        elif status in {
+            "No Barangay Report",
+            "No EC Report",
+        }:
+            counts["missing_source"] += 1
+        else:
+            counts["no_current_data"] += 1
+
+    return counts
 
 
 def get_dashboard_bundle() -> dict[str, object]:
     """
-    Retrieve the active event and calculate provisional
-    and validated barangay and evacuation-center summaries.
+    Build one read-only operational dashboard payload.
+
+    The dashboard uses the latest report per source and preserves a
+    separate provisional-versus-validated view. Population reconciliation
+    remains an operational quality check and is not used to rewrite data.
     """
     try:
         with SessionLocal() as session:
-            active_events = fetch_active_event_rows(session)
+            active_events = fetch_active_event_rows(
+                session
+            )
 
             if len(active_events) > 1:
                 raise DashboardDataIntegrityError(
@@ -313,17 +442,26 @@ def get_dashboard_bundle() -> dict[str, object]:
                     "official_evacuation_summary": None,
                     "provisional_evacuation_rows": [],
                     "official_evacuation_rows": [],
+                    "reconciliation_rows": [],
+                    "reconciliation_summary": (
+                        _build_reconciliation_summary([])
+                    ),
+                    "reconciliation_available": True,
                 }
 
-            active_event = dict(active_events[0])
-            event_id = int(active_event["id"])
+            active_event = dict(
+                active_events[0]
+            )
+            event_id = int(
+                active_event["id"]
+            )
 
-            barangays = fetch_active_barangays(session)
-            total_barangays = len(barangays)
-
-            # -------------------------------------------------
-            # BARANGAY REPORTS
-            # -------------------------------------------------
+            barangays = fetch_active_barangays(
+                session
+            )
+            total_barangays = len(
+                barangays
+            )
 
             latest_all_rows = [
                 dict(row)
@@ -338,25 +476,27 @@ def get_dashboard_bundle() -> dict[str, object]:
                 for row in fetch_latest_barangay_updates_for_event(
                     session,
                     event_id=event_id,
-                    included_statuses=("Validated",),
+                    included_statuses=(
+                        "Validated",
+                    ),
                 )
             ]
 
             provisional_summary = _build_summary(
                 rows=latest_all_rows,
                 total_barangays=total_barangays,
-                usable_statuses=PROVISIONAL_USABLE_STATUSES,
+                usable_statuses=(
+                    PROVISIONAL_USABLE_STATUSES
+                ),
             )
 
             official_summary = _build_summary(
                 rows=latest_validated_rows,
                 total_barangays=total_barangays,
-                usable_statuses={"Validated"},
+                usable_statuses={
+                    "Validated",
+                },
             )
-
-            # -------------------------------------------------
-            # EVACUATION-CENTER REPORTS
-            # -------------------------------------------------
 
             latest_evacuation_rows = [
                 dict(row)
@@ -371,32 +511,46 @@ def get_dashboard_bundle() -> dict[str, object]:
                 for row in fetch_latest_evacuation_updates_for_event(
                     session,
                     event_id=event_id,
-                    included_statuses=("Validated",),
+                    included_statuses=(
+                        "Validated",
+                    ),
                 )
             ]
 
             provisional_evacuation_summary = (
                 _build_evacuation_summary(
                     rows=latest_evacuation_rows,
-                    usable_statuses=PROVISIONAL_USABLE_STATUSES,
+                    usable_statuses=(
+                        PROVISIONAL_USABLE_STATUSES
+                    ),
                 )
             )
 
             official_evacuation_summary = (
                 _build_evacuation_summary(
-                    rows=latest_validated_evacuation_rows,
-                    usable_statuses={"Validated"},
+                    rows=(
+                        latest_validated_evacuation_rows
+                    ),
+                    usable_statuses={
+                        "Validated",
+                    },
                 )
             )
 
-            return {
+            bundle = {
                 "active_event": active_event,
-
-                "provisional_summary": provisional_summary,
-                "official_summary": official_summary,
-                "provisional_rows": latest_all_rows,
-                "official_rows": latest_validated_rows,
-
+                "provisional_summary": (
+                    provisional_summary
+                ),
+                "official_summary": (
+                    official_summary
+                ),
+                "provisional_rows": (
+                    latest_all_rows
+                ),
+                "official_rows": (
+                    latest_validated_rows
+                ),
                 "provisional_evacuation_summary": (
                     provisional_evacuation_summary
                 ),
@@ -410,6 +564,30 @@ def get_dashboard_bundle() -> dict[str, object]:
                     latest_validated_evacuation_rows
                 ),
             }
+
+        try:
+            reconciliation_rows = (
+                get_population_reconciliation_queue()
+            )
+        except ValidationServiceError:
+            reconciliation_rows = []
+            reconciliation_available = False
+        else:
+            reconciliation_available = True
+
+        bundle["reconciliation_rows"] = (
+            reconciliation_rows
+        )
+        bundle["reconciliation_summary"] = (
+            _build_reconciliation_summary(
+                reconciliation_rows
+            )
+        )
+        bundle["reconciliation_available"] = (
+            reconciliation_available
+        )
+
+        return bundle
 
     except DashboardServiceError:
         raise
