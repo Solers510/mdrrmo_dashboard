@@ -14,6 +14,7 @@ from database.models import (
     ResponseResource,
     IncidentResourceAssignment,
     CrossBarangayEvacuationAllocation,
+    ReportSnapshot,
     AppUser,
 )
 def fetch_active_event_rows(session: Session):
@@ -1589,4 +1590,61 @@ def fetch_latest_cross_allocations_for_event(
             origin_barangay.c.name,
         )
     )
+    return session.execute(statement).mappings().all()
+
+
+
+def fetch_report_snapshot_by_generation_key(
+    session: Session,
+    *,
+    generation_key: str,
+) -> ReportSnapshot | None:
+    return session.scalar(
+        select(ReportSnapshot).where(
+            ReportSnapshot.generation_key == generation_key
+        )
+    )
+
+
+def fetch_report_snapshot_by_id(
+    session: Session,
+    *,
+    snapshot_id: int,
+) -> ReportSnapshot | None:
+    return session.scalar(
+        select(ReportSnapshot).where(
+            ReportSnapshot.id == snapshot_id
+        )
+    )
+
+
+def fetch_recent_report_snapshots(
+    session: Session,
+    *,
+    limit: int = 100,
+):
+    statement = (
+        select(
+            ReportSnapshot.id,
+            ReportSnapshot.event_id,
+            DisasterEvent.event_name,
+            DisasterEvent.classification,
+            ReportSnapshot.report_type,
+            ReportSnapshot.report_mode,
+            ReportSnapshot.sitrep_number,
+            ReportSnapshot.generated_by,
+            ReportSnapshot.generated_at,
+            ReportSnapshot.snapshot_sha256,
+        )
+        .join(
+            DisasterEvent,
+            DisasterEvent.id == ReportSnapshot.event_id,
+        )
+        .order_by(
+            ReportSnapshot.generated_at.desc(),
+            ReportSnapshot.id.desc(),
+        )
+        .limit(limit)
+    )
+
     return session.execute(statement).mappings().all()

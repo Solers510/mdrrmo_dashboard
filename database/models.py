@@ -15,6 +15,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -1416,6 +1417,99 @@ class CrossBarangayEvacuationAllocation(Base):
         nullable=False,
         server_default=func.now(),
     )
+class ReportSnapshot(Base):
+    """Append-only snapshot used for reproducible situation reports."""
+
+    __tablename__ = "report_snapshots"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_key",
+            name="uq_report_snapshots_generation_key",
+        ),
+        CheckConstraint(
+            "report_type IN ('Situation Report')",
+            name="ck_report_snapshots_report_type",
+        ),
+        CheckConstraint(
+            "report_mode IN ('Provisional Operational', 'Official Validated')",
+            name="ck_report_snapshots_report_mode",
+        ),
+        Index(
+            "ix_report_snapshots_event_id",
+            "event_id",
+        ),
+        Index(
+            "ix_report_snapshots_generated_at",
+            "generated_at",
+        ),
+        Index(
+            "ix_report_snapshots_generated_by_user_id",
+            "generated_by_user_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "disaster_events.id",
+            name="fk_report_snapshots_event_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    generation_key: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+    )
+    report_type: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="Situation Report",
+        server_default="Situation Report",
+    )
+    report_mode: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+    )
+    sitrep_number: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+    )
+    generated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "app_users.id",
+            name="fk_report_snapshots_generated_by_user_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    generated_by: Mapped[str] = mapped_column(
+        String(150),
+        nullable=False,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    snapshot_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+    snapshot_sha256: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class AppUser(Base):
     """
     An authorized MDRRMO dashboard user.
