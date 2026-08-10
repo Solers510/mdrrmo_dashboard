@@ -90,14 +90,40 @@ Verify an archive:
 python scripts/verify_backup.py backups\<backup-name>.backup
 ```
 
-Restore drill:
+## Phase 8 recovery validation
+
+The normal application role must remain least privilege and must **not**
+receive `CREATEDB`.
+
+Create or reset the dedicated restore-maintenance role. Passwords are
+requested securely and are not accepted as command-line arguments:
 
 ```powershell
-python scripts/restore_test.py --latest
+python scripts/setup_restore_maintenance_role.py
 ```
 
-If the normal application role lacks `CREATEDB`, do not elevate it. Perform
-the restore drill using a separate maintenance account/process.
+Then run the complete validation:
+
+```powershell
+python scripts/phase8_validation.py
+```
+
+This command:
+
+1. creates and verifies a new PostgreSQL backup;
+2. creates a disposable restore database with the maintenance role;
+3. restores the archive **as the normal application role**;
+4. verifies the Alembic revision and every recorded table row count;
+5. compares the restored table/trigger schema with the source database;
+6. creates another empty disposable database;
+7. runs Alembic from zero to head as the application role;
+8. verifies table/trigger parity and immutability triggers;
+9. drops both disposable databases; and
+10. writes non-secret evidence to
+   `deployment/PHASE8_VALIDATION_RESULTS.json`.
+
+Do not place the maintenance password in `.env`, Git, shell history, or the
+application's normal `DATABASE_URL`.
 
 ## Release rule
 

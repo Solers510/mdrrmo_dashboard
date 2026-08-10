@@ -655,8 +655,146 @@ def check_latest_backup(
     return rows
 
 
-def manual_gates() -> list[dict[str, str]]:
+def _uat_gate() -> dict[str, str]:
+    path = (
+        PROJECT_ROOT
+        / "deployment"
+        / "UAT_SIGNOFF.md"
+    )
+
+    if not path.exists():
+        return _result(
+            "Role-by-role UAT",
+            "MANUAL",
+            "UAT sign-off evidence is missing.",
+        )
+
+    text = path.read_text(
+        encoding="utf-8-sig"
+    )
+
+    complete = (
+        "**Status: COMPLETE**"
+        in text
+    )
+
+    return _result(
+        "Role-by-role UAT",
+        "PASS" if complete else "MANUAL",
+        "Deployment UAT sign-off is recorded."
+        if complete
+        else "UAT sign-off is not marked COMPLETE.",
+    )
+
+
+def _phase8_recovery_gate() -> list[dict[str, str]]:
+    path = (
+        PROJECT_ROOT
+        / "deployment"
+        / "PHASE8_VALIDATION_RESULTS.json"
+    )
+
+    if not path.exists():
+        return [
+            _result(
+                "Full restore drill",
+                "MANUAL",
+                "Phase 8 restore evidence has not been generated yet.",
+            ),
+            _result(
+                "Fresh database migration drill",
+                "MANUAL",
+                "Phase 8 fresh-database evidence has not been generated yet.",
+            ),
+        ]
+
+    try:
+        import json
+
+        data = json.loads(
+            path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception as error:
+        return [
+            _result(
+                "Full restore drill",
+                "FAIL",
+                "Phase 8 evidence could not be read: "
+                + type(error).__name__,
+            ),
+            _result(
+                "Fresh database migration drill",
+                "FAIL",
+                "Phase 8 evidence could not be read.",
+            ),
+        ]
+
+    restore_pass = (
+        data.get("status") == "PASS"
+        and data.get(
+            "restore_drill",
+            {},
+        ).get("status") == "PASS"
+        and data.get(
+            "restore_drill",
+            {},
+        ).get(
+            "row_counts_matched"
+        )
+        is True
+        and data.get(
+            "restore_drill",
+            {},
+        ).get(
+            "application_role_restore"
+        )
+        is True
+    )
+
+    fresh_pass = (
+        data.get("status") == "PASS"
+        and data.get(
+            "fresh_database_drill",
+            {},
+        ).get("status") == "PASS"
+        and data.get(
+            "fresh_database_drill",
+            {},
+        ).get(
+            "application_role_migration"
+        )
+        is True
+    )
+
     return [
+        _result(
+            "Full restore drill",
+            "PASS"
+            if restore_pass
+            else "FAIL",
+            "Verified backup restored into a disposable database, "
+            "using a dedicated maintenance role for database lifecycle "
+            "and the least-privilege application role for pg_restore."
+            if restore_pass
+            else "Phase 8 restore evidence is incomplete or failed.",
+        ),
+        _result(
+            "Fresh database migration drill",
+            "PASS"
+            if fresh_pass
+            else "FAIL",
+            "Alembic migrated an empty disposable database from zero "
+            "to head using the application role."
+            if fresh_pass
+            else "Phase 8 fresh-database evidence is incomplete or failed.",
+        ),
+    ]
+
+
+def manual_gates() -> list[dict[str, str]]:
+    rows = [
         _result(
             "Authoritative barangay master data",
             "MANUAL",
@@ -669,17 +807,12 @@ def manual_gates() -> list[dict[str, str]]:
             "MDRRMO must verify alert-level names/descriptions/operational "
             "meaning before production use.",
         ),
+        _uat_gate(),
         _result(
-            "Full restore drill",
+            "Off-machine backup copy",
             "MANUAL",
-            "Run a restore into a disposable test database using a dedicated "
-            "maintenance role. Do not grant CREATEDB to the normal app role.",
-        ),
-        _result(
-            "Role-by-role UAT",
-            "MANUAL",
-            "Complete deployment/UAT_CHECKLIST.md with real authorized "
-            "test accounts before production.",
+            "Copy the verified backup set to approved storage outside "
+            "the application machine before production.",
         ),
         _result(
             "Production network and TLS",
@@ -688,6 +821,9 @@ def manual_gates() -> list[dict[str, str]]:
             "Google OIDC redirect registration must be verified.",
         ),
     ]
+
+    rows[2:2] = _phase8_recovery_gate()
+    return rows
 
 
 def main() -> None:
