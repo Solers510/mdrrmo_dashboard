@@ -61,7 +61,7 @@ with health_tab:
 
         st.dataframe(
             pd.DataFrame(health_rows),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -125,7 +125,7 @@ with audit_tab:
                     for row in filtered_rows
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -169,7 +169,7 @@ with backup_tab:
     if st.button(
         "Create Verified Backup Now",
         type="primary",
-        use_container_width=True,
+        width="stretch",
     ):
         try:
             result = create_database_backup()
@@ -188,7 +188,7 @@ with backup_tab:
     if backup_rows:
         st.dataframe(
             pd.DataFrame(backup_rows),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     else:

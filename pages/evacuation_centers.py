@@ -220,7 +220,7 @@ with manage_tab:
         create_submitted = st.form_submit_button(
             "Add Evacuation Center",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=not can_manage_centers,
         )
 
@@ -299,7 +299,7 @@ with manage_tab:
 
         st.dataframe(
             center_table,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -631,7 +631,7 @@ with update_tab:
             update_submitted = st.form_submit_button(
                 "Save Evacuation Update",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
         if update_submitted:
@@ -870,7 +870,7 @@ with cross_tab:
                             st.form_submit_button(
                                 "Save Cross-Barangay Allocation",
                                 type="primary",
-                                use_container_width=True,
+                                width="stretch",
                             )
                         )
 
@@ -964,7 +964,7 @@ with cross_tab:
                         for row in current_allocations
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -1028,6 +1028,6 @@ with history_tab:
 
         st.dataframe(
             recent_table,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )

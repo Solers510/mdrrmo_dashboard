@@ -285,7 +285,7 @@ if active_event is None:
         if st.button(
             "Create Active Event",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=not confirmation,
             key="new_event_submit",
         ):
@@ -926,7 +926,7 @@ with history_tab:
             pd.DataFrame(
                 history_rows
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 

@@ -700,7 +700,7 @@ can_submit = (
 if st.button(
     "Save Barangay Report",
     type="primary",
-    use_container_width=True,
+    width="stretch",
     disabled=not can_submit,
     key=prefix + "submit",
 ):
@@ -845,6 +845,6 @@ else:
 
     st.dataframe(
         pd.DataFrame(table_rows),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )

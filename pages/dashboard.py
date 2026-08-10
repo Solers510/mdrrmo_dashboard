@@ -242,7 +242,7 @@ refresh_column, mode_column = st.columns(
 with refresh_column:
     if st.button(
         "Refresh",
-        use_container_width=True,
+        width="stretch",
     ):
         st.rerun()
 
@@ -634,7 +634,7 @@ with barangay_tab:
             build_barangay_table(
                 selected_rows
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -694,7 +694,7 @@ with barangay_tab:
 
         st.plotly_chart(
             affected_figure,
-            use_container_width=True,
+            width="stretch",
         )
 
     displacement_rows = []
@@ -761,7 +761,7 @@ with barangay_tab:
 
         st.plotly_chart(
             displacement_figure,
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -814,7 +814,7 @@ with evacuation_tab:
             build_evacuation_table(
                 evacuation_rows
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -880,7 +880,7 @@ with evacuation_tab:
 
         st.plotly_chart(
             capacity_figure,
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -1088,7 +1088,7 @@ with quality_tab:
                         for row in problem_rows
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 

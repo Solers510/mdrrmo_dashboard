@@ -33,7 +33,7 @@ def login_screen() -> None:
     if st.button(
         "Sign in",
         type="primary",
-        use_container_width=True,
+        width="stretch",
     ):
         st.login()
 
@@ -124,7 +124,7 @@ def get_current_app_user() -> CurrentAppUser:
 
     if st.button(
         "Sign out",
-        use_container_width=True,
+        width="stretch",
     ):
         st.logout()
 
@@ -217,6 +217,6 @@ def render_account_sidebar(
 
         if st.button(
             "Sign out",
-            use_container_width=True,
+            width="stretch",
         ):
             st.logout()

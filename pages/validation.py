@@ -182,7 +182,7 @@ with barangay_tab:
                     for row in barangay_queue
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -313,7 +313,7 @@ with barangay_tab:
             submitted = st.form_submit_button(
                 "Save Barangay Review",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
         if submitted:
@@ -379,7 +379,7 @@ with ec_tab:
                     for row in evacuation_queue
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -527,7 +527,7 @@ with ec_tab:
             ec_submitted = st.form_submit_button(
                 "Save Evacuation-Center Review",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
         if ec_submitted:
@@ -618,7 +618,7 @@ with reconciliation_tab:
         )
         st.dataframe(
             table,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 

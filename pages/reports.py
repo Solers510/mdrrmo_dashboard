@@ -133,7 +133,7 @@ else:
     if st.button(
         "Create Report Snapshot",
         type="primary",
-        use_container_width=True,
+        width="stretch",
         disabled=not confirmation,
     ):
         try:
@@ -200,7 +200,7 @@ history_table = pd.DataFrame(
 
 st.dataframe(
     history_table,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
 )
 
@@ -301,7 +301,7 @@ with export_columns[0]:
             "application/vnd.openxmlformats-officedocument."
             "spreadsheetml.sheet"
         ),
-        use_container_width=True,
+        width="stretch",
     )
 
 with export_columns[1]:
@@ -313,5 +313,5 @@ with export_columns[1]:
             extension="pdf",
         ),
         mime="application/pdf",
-        use_container_width=True,
+        width="stretch",
     )

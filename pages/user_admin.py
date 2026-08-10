@@ -132,7 +132,7 @@ with add_tab:
         submitted = st.form_submit_button(
             "Authorize User",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
     if submitted:
@@ -203,7 +203,7 @@ with manage_tab:
 
         st.dataframe(
             table,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -289,7 +289,7 @@ with manage_tab:
                 st.form_submit_button(
                     "Save User Changes",
                     type="primary",
-                    use_container_width=True,
+                    width="stretch",
                 )
             )
 

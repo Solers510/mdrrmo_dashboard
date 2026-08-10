@@ -259,7 +259,7 @@ with new_tab:
             submitted = st.form_submit_button(
                 "Save Incident",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
         if submitted:
@@ -340,7 +340,7 @@ with incident_tab:
                     for incident in incidents
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -419,7 +419,7 @@ with incident_tab:
         else:
             st.dataframe(
                 pd.DataFrame(assignments),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -719,7 +719,7 @@ with resource_tab:
             resource_submitted = st.form_submit_button(
                 "Add Response Resource",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
 
         if resource_submitted:
@@ -767,7 +767,7 @@ with resource_tab:
                         for resource in resources
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -889,6 +889,6 @@ with history_tab:
                         for row in history_rows
                     ]
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
