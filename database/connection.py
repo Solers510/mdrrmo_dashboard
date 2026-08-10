@@ -18,9 +18,28 @@ if not DATABASE_URL:
     )
 
 
+DB_CONNECT_TIMEOUT_SECONDS = max(
+    int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5")),
+    1,
+)
+
+DB_POOL_TIMEOUT_SECONDS = max(
+    int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "5")),
+    1,
+)
+
+ENGINE_OPTIONS: dict[str, object] = {
+    "pool_pre_ping": True,
+    "pool_timeout": DB_POOL_TIMEOUT_SECONDS,
+    "connect_args": {
+        "connect_timeout": DB_CONNECT_TIMEOUT_SECONDS,
+    },
+}
+
+
 engine: Engine = create_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
+    **ENGINE_OPTIONS,
 )
 
 

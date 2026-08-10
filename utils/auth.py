@@ -11,6 +11,12 @@ from services.access_service import (
     UserNotAuthorizedError,
     resolve_app_user,
 )
+from utils.app_logging import (
+    get_app_logger,
+)
+
+
+logger = get_app_logger("auth")
 
 
 def login_screen() -> None:
@@ -106,8 +112,15 @@ def get_current_app_user() -> CurrentAppUser:
     except InvalidUserRoleError as error:
         st.error(str(error))
 
-    except AccessServiceError as error:
-        st.error(str(error))
+    except AccessServiceError:
+        logger.exception(
+            "Application authorization lookup failed."
+        )
+        st.error(
+            "The application could not verify your authorization. "
+            "The database may be temporarily unavailable. "
+            "Try again shortly."
+        )
 
     if st.button(
         "Sign out",
