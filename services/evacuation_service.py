@@ -386,6 +386,68 @@ def create_evacuation_center_update(
         raise
 
 
+def _evacuation_correction_snapshot(report) -> dict[str, object]:
+    return {
+        "id": int(report.id),
+        "event_id": int(report.event_id),
+        "evacuation_center_id": int(report.evacuation_center_id),
+        "validation_status": str(report.validation_status),
+        "status": str(report.status),
+        "families": int(report.families),
+        "individuals": int(report.individuals),
+        "children": int(report.children),
+        "senior_citizens": int(report.senior_citizens),
+        "pwd": int(report.pwd),
+        "pregnant_women": int(report.pregnant_women),
+        "medical_cases": int(report.medical_cases),
+        "food_status": str(report.food_status),
+        "water_status": str(report.water_status),
+        "electricity_status": str(report.electricity_status),
+        "sanitation_status": str(report.sanitation_status),
+        "source": str(report.source),
+        "remarks": report.remarks,
+        "reviewed_by": report.reviewed_by,
+        "review_notes": report.review_notes,
+        "reviewed_at": report.reviewed_at,
+        "recorded_at": report.recorded_at,
+    }
+
+
+def get_pending_evacuation_correction(
+    *,
+    center_id: int,
+) -> dict[str, object] | None:
+    if center_id <= 0:
+        raise EvacuationValidationError(
+            "A valid evacuation center is required."
+        )
+
+    with SessionLocal() as session:
+        active_events = fetch_active_event_rows(session)
+
+        if len(active_events) > 1:
+            raise EvacuationDataIntegrityError(
+                "More than one active disaster event exists."
+            )
+
+        if not active_events:
+            raise NoActiveEventError(
+                "Create an active disaster event first."
+            )
+
+        reports = fetch_needs_correction_evacuation_updates(
+            session,
+            event_id=int(active_events[0]["id"]),
+            center_id=center_id,
+        )
+
+        if not reports:
+            return None
+
+        return _evacuation_correction_snapshot(reports[0])
+
+
+
 def get_recent_evacuation_updates(
     *,
     limit: int = 20,

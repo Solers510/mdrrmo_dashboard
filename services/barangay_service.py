@@ -176,6 +176,69 @@ def get_barangay_entry_context(
         }
 
 
+def _barangay_correction_snapshot(report) -> dict[str, object]:
+    return {
+        "id": int(report.id),
+        "event_id": int(report.event_id),
+        "barangay_id": int(report.barangay_id),
+        "validation_status": str(report.validation_status),
+        "situation_status": str(report.situation_status),
+        "affected_families": int(report.affected_families),
+        "affected_individuals": int(report.affected_individuals),
+        "inside_ec_families": int(report.inside_ec_families),
+        "inside_ec_individuals": int(report.inside_ec_individuals),
+        "outside_ec_families": int(report.outside_ec_families),
+        "outside_ec_individuals": int(report.outside_ec_individuals),
+        "flood_status": str(report.flood_status),
+        "flood_depth_cm": float(report.flood_depth_cm),
+        "road_status": str(report.road_status),
+        "power_status": str(report.power_status),
+        "water_status": str(report.water_status),
+        "rescue_requests": int(report.rescue_requests),
+        "source": str(report.source),
+        "remarks": report.remarks,
+        "reviewed_by": report.reviewed_by,
+        "review_notes": report.review_notes,
+        "reviewed_at": report.reviewed_at,
+        "recorded_at": report.recorded_at,
+    }
+
+
+def get_pending_barangay_correction(
+    *,
+    barangay_id: int,
+) -> dict[str, object] | None:
+    if barangay_id <= 0:
+        raise BarangayValidationError(
+            "A valid barangay is required."
+        )
+
+    with SessionLocal() as session:
+        active_events = fetch_active_event_rows(session)
+
+        if len(active_events) > 1:
+            raise BarangayDataIntegrityError(
+                "More than one active disaster event exists."
+            )
+
+        if not active_events:
+            raise NoActiveEventError(
+                "No active disaster event exists."
+            )
+
+        reports = fetch_needs_correction_barangay_updates(
+            session,
+            event_id=int(active_events[0]["id"]),
+            barangay_id=barangay_id,
+        )
+
+        if not reports:
+            return None
+
+        return _barangay_correction_snapshot(reports[0])
+
+
+
 def get_recent_barangay_updates(
     *,
     limit: int = 20,

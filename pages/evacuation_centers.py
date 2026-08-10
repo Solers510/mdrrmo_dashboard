@@ -34,6 +34,7 @@ from services.evacuation_service import (
     NoActiveEventError,
     create_evacuation_center,
     create_evacuation_center_update,
+    get_pending_evacuation_correction,
     get_recent_evacuation_updates,
     list_active_evacuation_centers,
 )
@@ -54,6 +55,18 @@ can_manage_centers = has_permission(
     current_user,
     PERMISSION_MANAGE_EVACUATION_CENTERS,
 )
+
+
+def select_index(
+    options,
+    value: object,
+    fallback: int = 0,
+) -> int:
+    try:
+        return list(options).index(str(value))
+    except ValueError:
+        return fallback
+
 
 st.title("Evacuation Center Monitoring")
 
@@ -331,18 +344,104 @@ with update_tab:
         if evacuation_submission_state_key not in st.session_state:
             st.session_state[evacuation_submission_state_key] = str(uuid4())
 
-        with st.form(
-            f"evacuation_update_form_{evacuation_update_form_nonce}",
-            clear_on_submit=False,
-        ):
-            selected_center_label = st.selectbox(
-                "Evacuation center *",
-                options=center_labels,
+        selected_center_label = st.selectbox(
+            "Evacuation center *",
+            options=center_labels,
+            key=(
+                f"evacuation_center_selector_"
+                f"{evacuation_update_form_nonce}"
+            ),
+        )
+
+        selected_center_id = (
+            center_label_to_id[
+                selected_center_label
+            ]
+        )
+
+        try:
+            pending_correction = (
+                get_pending_evacuation_correction(
+                    center_id=selected_center_id
+                )
+            )
+        except EvacuationServiceError as error:
+            st.error(str(error))
+            pending_correction = None
+
+        correction_id = (
+            int(pending_correction["id"])
+            if pending_correction is not None
+            else None
+        )
+
+        if pending_correction is not None:
+            st.error(
+                f"Correction Required — Evacuation-Center "
+                f"Report #{correction_id}"
             )
 
+            correction_columns = st.columns(2)
+
+            with correction_columns[0]:
+                st.write(
+                    "**Reviewed by:** "
+                    + str(
+                        pending_correction["reviewed_by"]
+                        or "Authorized validator"
+                    )
+                )
+
+            with correction_columns[1]:
+                st.write(
+                    "**Reviewed at:** "
+                    + str(
+                        pending_correction["reviewed_at"]
+                        or "Not recorded"
+                    )
+                )
+
+            st.warning(
+                "**Validator instructions:** "
+                + str(
+                    pending_correction["review_notes"]
+                    or "No correction instructions were recorded."
+                )
+            )
+
+            st.info(
+                f"The form below is prefilled from Report "
+                f"#{correction_id}. Submitting the corrected "
+                f"report will supersede Report #{correction_id}; "
+                f"the original remains in history."
+            )
+
+        correction_form_suffix = (
+            f"correction_{correction_id}"
+            if correction_id is not None
+            else "new"
+        )
+
+        with st.form(
+            (
+                f"evacuation_update_form_"
+                f"{evacuation_update_form_nonce}_"
+                f"{selected_center_id}_"
+                f"{correction_form_suffix}"
+            ),
+            clear_on_submit=False,
+        ):
             status = st.selectbox(
                 "Center status *",
                 options=EVACUATION_CENTER_STATUSES,
+                index=(
+                    select_index(
+                        EVACUATION_CENTER_STATUSES,
+                        pending_correction["status"],
+                    )
+                    if pending_correction is not None
+                    else 0
+                ),
             )
 
             st.markdown("### Occupancy")
@@ -354,6 +453,11 @@ with update_tab:
                     "Families",
                     min_value=0,
                     step=1,
+                    value=(
+                        int(pending_correction["families"])
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             with occupancy_columns[1]:
@@ -361,6 +465,11 @@ with update_tab:
                     "Individuals",
                     min_value=0,
                     step=1,
+                    value=(
+                        int(pending_correction["individuals"])
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             st.markdown("### Vulnerable groups")
@@ -372,6 +481,11 @@ with update_tab:
                     "Children",
                     min_value=0,
                     step=1,
+                    value=(
+                        int(pending_correction["children"])
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             with vulnerable_row_1[1]:
@@ -379,6 +493,11 @@ with update_tab:
                     "Senior citizens",
                     min_value=0,
                     step=1,
+                    value=(
+                        int(pending_correction["senior_citizens"])
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             with vulnerable_row_1[2]:
@@ -386,6 +505,11 @@ with update_tab:
                     "Persons with disabilities",
                     min_value=0,
                     step=1,
+                    value=(
+                        int(pending_correction["pwd"])
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             vulnerable_row_2 = st.columns(2)
@@ -395,6 +519,11 @@ with update_tab:
                     "Pregnant women",
                     min_value=0,
                     step=1,
+                    value=(
+                        int(pending_correction["pregnant_women"])
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             with vulnerable_row_2[1]:
@@ -402,6 +531,11 @@ with update_tab:
                     "Medical cases",
                     min_value=0,
                     step=1,
+                    value=(
+                        int(pending_correction["medical_cases"])
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             st.markdown("### Essential services")
@@ -412,22 +546,51 @@ with update_tab:
                 food_status = st.selectbox(
                     "Food status",
                     options=SUPPLY_STATUSES,
+                    index=(
+                        select_index(
+                            SUPPLY_STATUSES,
+                            pending_correction["food_status"],
+                        )
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             with service_columns[1]:
                 water_status = st.selectbox(
                     "Water status",
                     options=SUPPLY_STATUSES,
+                    index=(
+                        select_index(
+                            SUPPLY_STATUSES,
+                            pending_correction["water_status"],
+                        )
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             with service_columns[2]:
                 electricity_status = st.selectbox(
                     "Electricity status",
                     options=ELECTRICITY_STATUSES,
+                    index=(
+                        select_index(
+                            ELECTRICITY_STATUSES,
+                            pending_correction["electricity_status"],
+                        )
+                        if pending_correction is not None
+                        else 0
+                    ),
                 )
 
             sanitation_status = st.text_input(
                 "Sanitation status *",
+                value=(
+                    str(pending_correction["sanitation_status"])
+                    if pending_correction is not None
+                    else ""
+                ),
                 placeholder=(
                     "Use the wording from the official form."
                 ),
@@ -435,6 +598,11 @@ with update_tab:
 
             source = st.text_input(
                 "Information source *",
+                value=(
+                    str(pending_correction["source"])
+                    if pending_correction is not None
+                    else ""
+                ),
                 placeholder=(
                     "Camp manager, MSWDO, field team, "
                     "official center report"
@@ -443,6 +611,11 @@ with update_tab:
 
             remarks = st.text_area(
                 "Remarks",
+                value=(
+                    str(pending_correction["remarks"] or "")
+                    if pending_correction is not None
+                    else ""
+                ),
                 height=120,
             )
 
@@ -468,12 +641,6 @@ with update_tab:
                 )
 
             else:
-                selected_center_id = (
-                    center_label_to_id[
-                        selected_center_label
-                    ]
-                )
-
                 try:
                     update_id = (
                         create_evacuation_center_update(

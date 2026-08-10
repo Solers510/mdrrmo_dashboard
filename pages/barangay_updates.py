@@ -22,6 +22,7 @@ from services.barangay_service import (
     NoActiveEventError,
     create_barangay_update,
     get_barangay_entry_context,
+    get_pending_barangay_correction,
     get_recent_barangay_updates,
     list_active_barangays,
 )
@@ -55,6 +56,17 @@ def format_datetime(
     ).strftime(
         "%d %B %Y, %I:%M %p"
     )
+
+
+def select_index(
+    options,
+    value: object,
+    fallback: int = 0,
+) -> int:
+    try:
+        return list(options).index(str(value))
+    except ValueError:
+        return fallback
 
 
 st.title("Barangay Situation Update")
@@ -204,10 +216,63 @@ try:
             barangay_id=selected_barangay_id
         )
     )
+    pending_correction = (
+        get_pending_barangay_correction(
+            barangay_id=selected_barangay_id
+        )
+    )
 
 except BarangayServiceError as error:
     st.error(str(error))
     st.stop()
+
+
+if pending_correction is not None:
+    correction_id = int(pending_correction["id"])
+    prefix = (
+        f"barangay_{nonce}_{selected_barangay_id}_"
+        f"correction_{correction_id}_"
+    )
+
+    st.error(
+        f"Correction Required — Barangay Report #{correction_id}"
+    )
+
+    correction_columns = st.columns(2)
+
+    with correction_columns[0]:
+        st.write(
+            "**Reviewed by:** "
+            + str(
+                pending_correction["reviewed_by"]
+                or "Authorized validator"
+            )
+        )
+
+    with correction_columns[1]:
+        reviewed_at = pending_correction["reviewed_at"]
+        st.write(
+            "**Reviewed at:** "
+            + (
+                format_datetime(reviewed_at)
+                if reviewed_at is not None
+                else "Not recorded"
+            )
+        )
+
+    st.warning(
+        "**Validator instructions:** "
+        + str(
+            pending_correction["review_notes"]
+            or "No correction instructions were recorded."
+        )
+    )
+
+    st.info(
+        f"The form below is prefilled from Report #{correction_id}. "
+        f"Submitting the corrected report will supersede Report "
+        f"#{correction_id}; the original remains in history."
+    )
 
 
 st.markdown(
@@ -268,10 +333,14 @@ with inside_columns[0]:
         "Families inside evacuation centers",
         min_value=0,
         step=1,
-        value=int(
-            entry_context[
-                "inside_ec_families"
-            ]
+        value=(
+            int(pending_correction["inside_ec_families"])
+            if pending_correction is not None
+            else int(
+                entry_context[
+                    "inside_ec_families"
+                ]
+            )
         ),
         key=prefix + "inside_families",
     )
@@ -281,10 +350,14 @@ with inside_columns[1]:
         "Individuals inside evacuation centers",
         min_value=0,
         step=1,
-        value=int(
-            entry_context[
-                "inside_ec_individuals"
-            ]
+        value=(
+            int(pending_correction["inside_ec_individuals"])
+            if pending_correction is not None
+            else int(
+                entry_context[
+                    "inside_ec_individuals"
+                ]
+            )
         ),
         key=prefix + "inside_individuals",
     )
@@ -324,6 +397,11 @@ with affected_columns[0]:
         "Affected families",
         min_value=0,
         step=1,
+        value=(
+            int(pending_correction["affected_families"])
+            if pending_correction is not None
+            else 0
+        ),
         key=(
             prefix
             + "affected_families"
@@ -335,6 +413,11 @@ with affected_columns[1]:
         "Affected individuals",
         min_value=0,
         step=1,
+        value=(
+            int(pending_correction["affected_individuals"])
+            if pending_correction is not None
+            else 0
+        ),
         key=(
             prefix
             + "affected_individuals"
@@ -353,6 +436,11 @@ with outside_columns[0]:
         "Families outside evacuation centers",
         min_value=0,
         step=1,
+        value=(
+            int(pending_correction["outside_ec_families"])
+            if pending_correction is not None
+            else 0
+        ),
         key=(
             prefix
             + "outside_families"
@@ -365,6 +453,11 @@ with outside_columns[1]:
             "Individuals outside evacuation centers",
             min_value=0,
             step=1,
+            value=(
+                int(pending_correction["outside_ec_individuals"])
+                if pending_correction is not None
+                else 0
+            ),
             key=(
                 prefix
                 + "outside_individuals"
@@ -446,9 +539,14 @@ else:
 situation_status = st.selectbox(
     "Situation status *",
     options=SITUATION_STATUSES,
-    index=min(
-        2,
-        len(SITUATION_STATUSES) - 1,
+    index=(
+        select_index(
+            SITUATION_STATUSES,
+            pending_correction["situation_status"],
+            min(2, len(SITUATION_STATUSES) - 1),
+        )
+        if pending_correction is not None
+        else min(2, len(SITUATION_STATUSES) - 1)
     ),
     key=prefix + "situation_status",
 )
@@ -464,6 +562,14 @@ with hazard_columns[0]:
     flood_status = st.selectbox(
         "Flood status",
         options=FLOOD_STATUSES,
+        index=(
+            select_index(
+                FLOOD_STATUSES,
+                pending_correction["flood_status"],
+            )
+            if pending_correction is not None
+            else 0
+        ),
         key=prefix + "flood_status",
     )
 
@@ -472,12 +578,25 @@ with hazard_columns[0]:
         min_value=0.0,
         step=1.0,
         format="%.2f",
+        value=(
+            float(pending_correction["flood_depth_cm"])
+            if pending_correction is not None
+            else 0.0
+        ),
         key=prefix + "flood_depth",
     )
 
     road_status = st.selectbox(
         "Road status",
         options=ROAD_STATUSES,
+        index=(
+            select_index(
+                ROAD_STATUSES,
+                pending_correction["road_status"],
+            )
+            if pending_correction is not None
+            else 0
+        ),
         key=prefix + "road_status",
     )
 
@@ -485,12 +604,28 @@ with hazard_columns[1]:
     power_status = st.selectbox(
         "Power status",
         options=UTILITY_STATUSES,
+        index=(
+            select_index(
+                UTILITY_STATUSES,
+                pending_correction["power_status"],
+            )
+            if pending_correction is not None
+            else 0
+        ),
         key=prefix + "power_status",
     )
 
     water_status = st.selectbox(
         "Water status",
         options=UTILITY_STATUSES,
+        index=(
+            select_index(
+                UTILITY_STATUSES,
+                pending_correction["water_status"],
+            )
+            if pending_correction is not None
+            else 0
+        ),
         key=prefix + "water_status",
     )
 
@@ -498,6 +633,11 @@ with hazard_columns[1]:
         "Pending rescue requests",
         min_value=0,
         step=1,
+        value=(
+            int(pending_correction["rescue_requests"])
+            if pending_correction is not None
+            else 0
+        ),
         key=prefix + "rescue_requests",
     )
 
@@ -519,6 +659,11 @@ except DataIntegrityValidationError as error:
 
 source = st.text_input(
     "Information source *",
+    value=(
+        str(pending_correction["source"])
+        if pending_correction is not None
+        else ""
+    ),
     placeholder=(
         "Barangay Captain, BDRRMC radio, "
         "field responder, official report"
@@ -528,6 +673,11 @@ source = st.text_input(
 
 remarks = st.text_area(
     "Remarks",
+    value=(
+        str(pending_correction["remarks"] or "")
+        if pending_correction is not None
+        else ""
+    ),
     height=120,
     key=prefix + "remarks",
 )
