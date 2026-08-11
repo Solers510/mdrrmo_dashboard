@@ -15,7 +15,7 @@ from database.repositories import (
     fetch_barangay_validation_queue,
     fetch_evacuation_update_for_review,
     fetch_evacuation_validation_queue,
-    fetch_latest_barangay_update_for_barangay,
+    fetch_latest_barangay_updates_for_event,
     fetch_latest_cross_allocations_for_event,
     fetch_latest_evacuation_updates_for_event,
 )
@@ -228,6 +228,19 @@ def get_population_reconciliation_queue(
                 )
             ]
 
+            latest_barangay_rows = [
+                dict(row)
+                for row in fetch_latest_barangay_updates_for_event(
+                    session,
+                    event_id=event_id,
+                    included_statuses=RECONCILIATION_SOURCE_STATUSES,
+                )
+            ]
+            latest_barangay_by_id = {
+                int(row["barangay_id"]): row
+                for row in latest_barangay_rows
+            }
+
             allocations_by_center: dict[
                 int,
                 list[dict[str, object]],
@@ -371,15 +384,8 @@ def get_population_reconciliation_queue(
                     barangay["id"]
                 )
 
-                report = (
-                    fetch_latest_barangay_update_for_barangay(
-                        session,
-                        event_id=event_id,
-                        barangay_id=barangay_id,
-                        included_statuses=(
-                            RECONCILIATION_SOURCE_STATUSES
-                        ),
-                    )
+                report = latest_barangay_by_id.get(
+                    barangay_id
                 )
 
                 ec_families = attributed_families[
@@ -414,16 +420,16 @@ def get_population_reconciliation_queue(
                     individual_difference = None
                 else:
                     barangay_families = int(
-                        report.inside_ec_families
+                        report["inside_ec_families"]
                     )
                     barangay_individuals = int(
-                        report.inside_ec_individuals
+                        report["inside_ec_individuals"]
                     )
                     barangay_status = (
-                        report.validation_status
+                        report["validation_status"]
                     )
                     barangay_recorded_at = (
-                        report.recorded_at
+                        report["recorded_at"]
                     )
                     family_difference = (
                         barangay_families
