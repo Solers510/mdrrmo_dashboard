@@ -41,3 +41,6 @@ finish_phase*.ps1
 # Production host/runtime details
 deployment/production_environment.toml
 deployment/offsite_backup_receipt.json
+
+# Machine-specific performance benchmark results
+performance_results/
