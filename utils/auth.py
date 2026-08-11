@@ -18,6 +18,13 @@ from utils.app_logging import (
 
 logger = get_app_logger("auth")
 
+CURRENT_APP_USER_SESSION_KEY = (
+    "_mdrrmo_current_app_user"
+)
+CURRENT_APP_USER_EMAIL_SESSION_KEY = (
+    "_mdrrmo_current_app_user_email"
+)
+
 
 def login_screen() -> None:
     """
@@ -81,14 +88,87 @@ def _enforce_identity_expiration(
             "Sign in again."
         )
 
+        clear_current_app_user_session_cache()
         st.logout()
         st.stop()
 
 
-def get_current_app_user() -> CurrentAppUser:
+def _read_cached_current_app_user(
+    state,
+    *,
+    email: str,
+) -> CurrentAppUser | None:
+    cached_email = str(
+        state.get(
+            CURRENT_APP_USER_EMAIL_SESSION_KEY,
+            "",
+        )
+    ).strip().lower()
+    cached_user = state.get(
+        CURRENT_APP_USER_SESSION_KEY
+    )
+
+    if (
+        cached_email != email
+        or not isinstance(
+            cached_user,
+            CurrentAppUser,
+        )
+    ):
+        return None
+
+    return cached_user
+
+
+def _write_current_app_user_state(
+    state,
+    user: CurrentAppUser,
+) -> None:
+    state[
+        CURRENT_APP_USER_SESSION_KEY
+    ] = user
+    state[
+        CURRENT_APP_USER_EMAIL_SESSION_KEY
+    ] = user.email
+
+
+def _clear_current_app_user_state(
+    state,
+) -> None:
+    state.pop(
+        CURRENT_APP_USER_SESSION_KEY,
+        None,
+    )
+    state.pop(
+        CURRENT_APP_USER_EMAIL_SESSION_KEY,
+        None,
+    )
+
+
+def clear_current_app_user_session_cache() -> None:
     """
-    Resolve the current OIDC identity into an application
-    user and enforce authorization.
+    Remove the per-session authorization object.
+
+    The app entry point refreshes authorization from PostgreSQL on every
+    Streamlit rerun. The selected page can then reuse that same freshly
+    resolved object without a second database lookup in the same rerun.
+    """
+    _clear_current_app_user_state(
+        st.session_state
+    )
+
+
+def get_current_app_user(
+    *,
+    refresh_authorization: bool = False,
+) -> CurrentAppUser:
+    """
+    Resolve the current OIDC identity into an application user.
+
+    `app.py` calls this with refresh_authorization=True before navigation,
+    preserving a fresh database authorization check on every Streamlit
+    rerun. Page-level permission guards reuse that same per-session object
+    later in the same rerun instead of querying PostgreSQL again.
     """
     claims = _identity_claims()
 
@@ -98,21 +178,41 @@ def get_current_app_user() -> CurrentAppUser:
         claims.get("email", "")
     ).strip().lower()
 
-    try:
-        return resolve_app_user(
-            email=email,
+    if not refresh_authorization:
+        cached_user = (
+            _read_cached_current_app_user(
+                st.session_state,
+                email=email,
+            )
         )
 
+        if cached_user is not None:
+            return cached_user
+
+    try:
+        user = resolve_app_user(
+            email=email,
+        )
+        _write_current_app_user_state(
+            st.session_state,
+            user,
+        )
+        return user
+
     except UserNotAuthorizedError as error:
+        clear_current_app_user_session_cache()
         st.error(str(error))
 
     except UserInactiveError as error:
+        clear_current_app_user_session_cache()
         st.error(str(error))
 
     except InvalidUserRoleError as error:
+        clear_current_app_user_session_cache()
         st.error(str(error))
 
     except AccessServiceError:
+        clear_current_app_user_session_cache()
         logger.exception(
             "Application authorization lookup failed."
         )
@@ -126,6 +226,7 @@ def get_current_app_user() -> CurrentAppUser:
         "Sign out",
         width="stretch",
     ):
+        clear_current_app_user_session_cache()
         st.logout()
 
     st.stop()
@@ -219,4 +320,5 @@ def render_account_sidebar(
             "Sign out",
             width="stretch",
         ):
+            clear_current_app_user_session_cache()
             st.logout()

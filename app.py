@@ -30,7 +30,9 @@ if not getattr(st.user, "is_logged_in", False):
     login_screen()
 
 
-current_user = get_current_app_user()
+current_user = get_current_app_user(
+    refresh_authorization=True
+)
 render_account_sidebar(current_user)
 
 
