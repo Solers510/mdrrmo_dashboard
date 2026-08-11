@@ -264,6 +264,32 @@ def build_evacuation_table(
     )
 
 
+def format_road_status(
+    value: object,
+) -> str:
+    """
+    Shorten known verbose road-status labels only in the routine dashboard
+    table. Full source wording remains available in the source-fields
+    expander.
+    """
+    text = str(
+        value
+    )
+
+    compact_labels = {
+        "Passable to Large Vehicles Only": "Large vehicles only",
+        "Passable to Small Vehicles Only": "Small vehicles only",
+        "Passable to Light Vehicles Only": "Light vehicles only",
+        "Passable with Difficulty": "Passable w/ difficulty",
+        "Passable with Caution": "Passable w/ caution",
+    }
+
+    return compact_labels.get(
+        text,
+        text,
+    )
+
+
 def build_barangay_operational_table(
     rows: list[dict[str, object]],
 ) -> pd.DataFrame:
@@ -302,7 +328,7 @@ def build_barangay_operational_table(
                     inside
                     + outside
                 ),
-                "Road": (
+                "Road": format_road_status(
                     row[
                         "road_status"
                     ]
@@ -373,8 +399,11 @@ def build_evacuation_operational_table(
         )
 
         occupancy = (
-            f"{individuals:,} / {safe_capacity:,}"
-            if safe_capacity > 0
+            (
+                f"{individuals:,} / {safe_capacity:,}"
+                f" · {utilization:.1f}%"
+            )
+            if utilization is not None
             else f"{individuals:,} / —"
         )
 
@@ -390,15 +419,7 @@ def build_evacuation_operational_table(
                         "status"
                     ]
                 ),
-                "Occupancy": occupancy,
-                "Utilization %": (
-                    round(
-                        utilization,
-                        1,
-                    )
-                    if utilization is not None
-                    else None
-                ),
+                "Occupancy / Use": occupancy,
                 "Food / Water": (
                     str(
                         row[
@@ -1468,8 +1489,7 @@ with evacuation_tab:
             column_order=(
                 "Evacuation Center",
                 "Status",
-                "Occupancy",
-                "Utilization %",
+                "Occupancy / Use",
                 "Food / Water",
                 "Power",
                 "Medical",
@@ -1490,18 +1510,13 @@ with evacuation_tab:
                         width=90,
                     )
                 ),
-                "Occupancy": (
+                "Occupancy / Use": (
                     st.column_config.TextColumn(
-                        "Occupancy",
-                        help="Individuals / safe capacity",
-                        width=85,
-                    )
-                ),
-                "Utilization %": (
-                    st.column_config.NumberColumn(
-                        "Use %",
-                        width=70,
-                        format="%.1f%%",
+                        "Occupancy / Use",
+                        help=(
+                            "Individuals / safe capacity · utilization"
+                        ),
+                        width=125,
                     )
                 ),
                 "Food / Water": (

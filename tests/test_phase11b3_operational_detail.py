@@ -63,7 +63,7 @@ class OperationalDetailContracts(
             source,
         )
         self.assertIn(
-            '"Occupancy"',
+            '"Occupancy / Use"',
             source,
         )
         self.assertIn(
@@ -251,6 +251,87 @@ class OperationalDetailReadabilityContracts(
 
         self.assertIn(
             '"Road",\n                        width=175,',
+            source,
+        )
+
+
+class OperationalDetailFinalPolishContracts(
+    unittest.TestCase
+):
+    def test_known_long_road_labels_are_compacted_only_for_routine_view(
+        self,
+    ):
+        source = DASHBOARD_PATH.read_text(
+            encoding="utf-8-sig"
+        )
+
+        self.assertIn(
+            "def format_road_status(",
+            source,
+        )
+        self.assertIn(
+            '"Passable to Large Vehicles Only": "Large vehicles only"',
+            source,
+        )
+        self.assertIn(
+            '"Road": format_road_status(',
+            source,
+        )
+        self.assertIn(
+            '"Full barangay source fields"',
+            source,
+        )
+
+    def test_ec_routine_table_combines_occupancy_and_utilization(
+        self,
+    ):
+        source = DASHBOARD_PATH.read_text(
+            encoding="utf-8-sig"
+        )
+
+        routine_start = source.index(
+            "def build_evacuation_operational_table("
+        )
+        routine_end = source.index(
+            "def format_table_age(",
+            routine_start,
+        )
+        routine_source = source[
+            routine_start:routine_end
+        ]
+
+        evacuation_tab_start = source.index(
+            "with evacuation_tab:"
+        )
+        evacuation_tab_end = source.index(
+            "with quality_tab:",
+            evacuation_tab_start,
+        )
+        evacuation_tab_source = source[
+            evacuation_tab_start:evacuation_tab_end
+        ]
+
+        self.assertIn(
+            '"Occupancy / Use": occupancy',
+            routine_source,
+        )
+        self.assertNotIn(
+            '"Utilization %": (',
+            routine_source,
+        )
+        self.assertIn(
+            '"Occupancy / Use",',
+            evacuation_tab_source,
+        )
+        self.assertNotIn(
+            '"Utilization %",',
+            evacuation_tab_source,
+        )
+
+        # The full source table intentionally retains the original
+        # Utilization % field for complete source-data inspection.
+        self.assertIn(
+            '"Full evacuation-center source fields"',
             source,
         )
 
