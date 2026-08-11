@@ -14,6 +14,10 @@ from services.access_service import (
 from utils.app_logging import (
     get_app_logger,
 )
+from utils.ui import (
+    render_identity_card,
+    render_login_header,
+)
 
 
 logger = get_app_logger("auth")
@@ -30,12 +34,7 @@ def login_screen() -> None:
     """
     Display the application login page.
     """
-    st.title("MDRRMO Naic Operations Dashboard")
-
-    st.write(
-        "Sign in using an authorized municipal or "
-        "development account."
-    )
+    render_login_header()
 
     if st.button(
         "Sign in",
@@ -306,14 +305,10 @@ def render_account_sidebar(
     with st.sidebar:
         st.divider()
 
-        st.caption("Signed in as")
-
-        st.write(
-            f"**{user.display_name}**"
-        )
-
-        st.caption(
-            f"{user.email} · {user.role}"
+        render_identity_card(
+            display_name=user.display_name,
+            email=user.email,
+            role=user.role,
         )
 
         if st.button(
