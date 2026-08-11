@@ -8,8 +8,6 @@ from config.access_control import (
 )
 from services.export_service import (
     ExportServiceError,
-    build_excel_report,
-    build_pdf_report,
     report_filename,
 )
 from services.report_service import (
@@ -27,6 +25,10 @@ from services.report_service import (
     list_report_snapshots,
 )
 from utils.auth import require_permission
+from utils.report_export_cache import (
+    ReportExportCacheError,
+    get_report_export_bundle,
+)
 
 
 current_user = require_permission(
@@ -277,13 +279,16 @@ st.info(
 )
 
 try:
-    excel_bytes = build_excel_report(
-        selected_snapshot
+    export_bundle = get_report_export_bundle(
+        selected_snapshot,
+        st.session_state,
     )
-    pdf_bytes = build_pdf_report(
-        selected_snapshot
-    )
-except ExportServiceError as error:
+    excel_bytes = export_bundle.excel_bytes
+    pdf_bytes = export_bundle.pdf_bytes
+except (
+    ExportServiceError,
+    ReportExportCacheError,
+) as error:
     st.error(str(error))
     st.stop()
 

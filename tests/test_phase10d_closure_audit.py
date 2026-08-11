@@ -39,17 +39,25 @@ class Phase10DClosureAuditContracts(
                 source,
             )
 
-    def test_report_export_builders_are_currently_eager(self):
-        source = REPORT_PAGE.read_text(
+    def test_audit_tracks_report_export_rerun_behavior(self):
+        source = AUDIT_SCRIPT.read_text(
             encoding="utf-8-sig"
         )
 
         self.assertIn(
-            "build_excel_report(",
+            "excel_build_calls_in_page",
             source,
         )
         self.assertIn(
-            "build_pdf_report(",
+            "pdf_build_calls_in_page",
+            source,
+        )
+        self.assertIn(
+            "exports_built_during_normal_rerun",
+            source,
+        )
+        self.assertIn(
+            "@st.cache_data",
             source,
         )
 
