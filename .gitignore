@@ -38,3 +38,6 @@ Desktop.ini
 # Temporary development artifacts
 app.py.phase*-backup-*
 finish_phase*.ps1
+# Production host/runtime details
+deployment/production_environment.toml
+deployment/offsite_backup_receipt.json
