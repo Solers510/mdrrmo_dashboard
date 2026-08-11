@@ -438,3 +438,186 @@ def render_event_control_strip(
         </section>
         """
     )
+def render_dashboard_mode_status(
+    *,
+    mode: str,
+) -> None:
+    if mode == "Official Validated":
+        tone = "success"
+        title = "Official validated view"
+        detail = (
+            "Figures use only reports that have completed validation."
+        )
+    else:
+        tone = "warning"
+        title = "Provisional operational view"
+        detail = (
+            "Latest submitted operational reports are included; "
+            "some figures may still be awaiting formal validation."
+        )
+
+    st.html(
+        f"""
+        <div class="mdrrmo-mode-strip mdrrmo-mode-strip--{tone}">
+          <strong>{escape(title)}</strong>
+          <span>{escape(detail)}</span>
+        </div>
+        """
+    )
+
+
+def render_dashboard_section_header(
+    *,
+    title: str,
+    subtitle: str | None = None,
+) -> None:
+    subtitle_html = ""
+
+    if subtitle:
+        subtitle_html = (
+            f'<p class="mdrrmo-dashboard-section__subtitle">'
+            f'{escape(subtitle)}</p>'
+        )
+
+    st.html(
+        f"""
+        <header class="mdrrmo-dashboard-section">
+          <h2 class="mdrrmo-dashboard-section__title">
+            {escape(title)}
+          </h2>
+          {subtitle_html}
+        </header>
+        """
+    )
+
+
+def render_attention_required(
+    items: list[dict[str, object]],
+) -> None:
+    """
+    Render only current non-zero operational exceptions.
+
+    Each item must contain label, value, and tone. Color reinforces the
+    explicit text; it never carries the meaning by itself.
+    """
+    if not items:
+        st.html(
+            """
+            <section class="mdrrmo-attention mdrrmo-attention--clear">
+              <div class="mdrrmo-attention__clear-title">
+                No immediate operational concern currently recorded
+              </div>
+              <div class="mdrrmo-attention__clear-detail">
+                Continue monitoring incoming barangay, evacuation-center,
+                validation, and reconciliation updates.
+              </div>
+            </section>
+            """
+        )
+        return
+
+    cards = []
+
+    for item in items:
+        tone = str(
+            item.get(
+                "tone",
+                "warning",
+            )
+        )
+
+        if tone not in {
+            "warning",
+            "danger",
+            "info",
+        }:
+            tone = "warning"
+
+        cards.append(
+            f"""
+            <div class="mdrrmo-attention-card
+                        mdrrmo-attention-card--{tone}">
+              <span class="mdrrmo-attention-card__value">
+                {escape(str(item["value"]))}
+              </span>
+              <span class="mdrrmo-attention-card__label">
+                {escape(str(item["label"]))}
+              </span>
+            </div>
+            """
+        )
+
+    st.html(
+        f"""
+        <section class="mdrrmo-attention">
+          <div class="mdrrmo-attention__grid">
+            {''.join(cards)}
+          </div>
+        </section>
+        """
+    )
+
+
+def render_kpi_grid(
+    items: list[dict[str, object]],
+    *,
+    compact: bool = False,
+) -> None:
+    """
+    Render a restrained operational summary grid.
+
+    Primary cards use a single institutional blue accent. Compact cards are
+    intentionally quieter for secondary breakdowns and freshness metadata.
+    """
+    grid_class = (
+        "mdrrmo-kpi-grid mdrrmo-kpi-grid--compact"
+        if compact
+        else "mdrrmo-kpi-grid"
+    )
+    card_class = (
+        "mdrrmo-kpi-card mdrrmo-kpi-card--compact"
+        if compact
+        else "mdrrmo-kpi-card"
+    )
+
+    cards = []
+
+    for item in items:
+        meta = item.get(
+            "meta"
+        )
+        meta_html = ""
+
+        if meta not in {
+            None,
+            "",
+        }:
+            meta_html = (
+                '<span class="mdrrmo-kpi-card__meta">'
+                + escape(
+                    str(meta)
+                )
+                + "</span>"
+            )
+
+        cards.append(
+            f"""
+            <div class="{card_class}">
+              <span class="mdrrmo-kpi-card__label">
+                {escape(str(item["label"]))}
+              </span>
+              <span class="mdrrmo-kpi-card__value">
+                {escape(str(item["value"]))}
+              </span>
+              {meta_html}
+            </div>
+            """
+        )
+
+    st.html(
+        f"""
+        <section class="{grid_class}">
+          {''.join(cards)}
+        </section>
+        """
+    )

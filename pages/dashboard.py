@@ -15,6 +15,10 @@ from services.dashboard_service import (
 )
 from utils.auth import require_permission
 from utils.ui import (
+    render_attention_required,
+    render_dashboard_mode_status,
+    render_dashboard_section_header,
+    render_kpi_grid,
     render_operational_event_strip,
     render_operational_page_header,
 )
@@ -48,6 +52,21 @@ def format_datetime(
     )
 
 
+def _counted_label(
+    count: int,
+    singular: str,
+    plural: str | None = None,
+) -> str:
+    if count == 1:
+        return singular
+
+    return (
+        plural
+        if plural is not None
+        else f"{singular}s"
+    )
+
+
 def format_age(
     value: datetime | None,
 ) -> str:
@@ -73,15 +92,28 @@ def format_age(
     minutes = seconds // 60
 
     if minutes < 60:
-        return f"{minutes} min ago"
+        return (
+            "1 minute ago"
+            if minutes == 1
+            else f"{minutes} minutes ago"
+        )
 
     hours = minutes // 60
 
     if hours < 24:
-        return f"{hours} hr ago"
+        return (
+            "1 hour ago"
+            if hours == 1
+            else f"{hours} hours ago"
+        )
 
     days = hours // 24
-    return f"{days} day(s) ago"
+
+    return (
+        "1 day ago"
+        if days == 1
+        else f"{days} days ago"
+    )
 
 
 def record_is_included(
@@ -240,19 +272,21 @@ render_operational_page_header(
 )
 
 refresh_column, mode_column = st.columns(
-    [1, 4]
+    [1, 4],
+    vertical_alignment="bottom",
 )
 
 with refresh_column:
     if st.button(
-        "Refresh",
+        "Refresh data",
+        icon=":material/refresh:",
         width="stretch",
     ):
         st.rerun()
 
 with mode_column:
     view_mode = st.radio(
-        "Dashboard data mode",
+        "Data mode",
         options=(
             "Provisional Operational",
             "Official Validated",
@@ -362,11 +396,6 @@ if view_mode == "Provisional Operational":
         "provisional_evacuation_rows"
     ]
 
-    st.warning(
-        "Operational view: some figures may still be awaiting "
-        "formal validation."
-    )
-
 else:
     summary = dashboard[
         "official_summary"
@@ -381,9 +410,9 @@ else:
         "official_evacuation_rows"
     ]
 
-    st.success(
-        "Official view: figures are based only on validated reports."
-    )
+render_dashboard_mode_status(
+    mode=view_mode
+)
 
 
 if summary is None or evacuation_summary is None:
@@ -412,195 +441,348 @@ included_evacuation_rows = [
 ]
 
 
-st.divider()
+reconciliation_summary = dashboard[
+    "reconciliation_summary"
+]
 
-st.subheader(
-    "Affected Population"
-)
-
-affected_columns = st.columns(3)
-
-affected_columns[0].metric(
-    "Affected Barangays",
+reconciliation_issue_count = (
     int(
-        summary[
-            "affected_barangays"
+        reconciliation_summary[
+            "mismatch"
         ]
-    ),
-)
-
-affected_columns[1].metric(
-    "Affected Families",
-    f"{int(summary['affected_families']):,}",
-)
-
-affected_columns[2].metric(
-    "Affected Individuals",
-    f"{int(summary['affected_individuals']):,}",
-)
-
-
-st.markdown(
-    "### Inside Evacuation Centers"
-)
-
-inside_columns = st.columns(3)
-
-inside_columns[0].metric(
-    "Families",
-    f"{int(summary['inside_ec_families']):,}",
-)
-
-inside_columns[1].metric(
-    "Individuals",
-    f"{int(summary['inside_ec_individuals']):,}",
-)
-
-inside_columns[2].metric(
-    "Operational Centers",
-    int(
-        evacuation_summary[
-            "open_centers"
+    )
+    + int(
+        reconciliation_summary[
+            "missing_source"
         ]
-    ),
+    )
+    + int(
+        reconciliation_summary[
+            "allocation_conflict"
+        ]
+    )
 )
 
-
-st.markdown(
-    "### Outside Evacuation Centers"
+pending_rescue_count = int(
+    summary[
+        "pending_rescue_requests"
+    ]
 )
-
-outside_columns = st.columns(2)
-
-outside_columns[0].metric(
-    "Families",
-    f"{int(summary['outside_ec_families']):,}",
+impassable_road_count = int(
+    summary[
+        "impassable_roads"
+    ]
 )
-
-outside_columns[1].metric(
-    "Individuals",
-    f"{int(summary['outside_ec_individuals']):,}",
+power_interruption_count = int(
+    summary[
+        "interrupted_power"
+    ]
 )
-
-
-st.markdown(
-    "### Displacement Reconciliation"
+water_interruption_count = int(
+    summary[
+        "interrupted_water"
+    ]
 )
-
-displacement_columns = st.columns(4)
-
-displacement_columns[0].metric(
-    "Total Displaced Families",
-    f"{int(summary['displaced_families']):,}",
+over_capacity_center_count = int(
+    evacuation_summary[
+        "over_capacity_centers"
+    ]
 )
-
-displacement_columns[1].metric(
-    "Total Displaced Individuals",
-    f"{int(summary['displaced_individuals']):,}",
+medical_case_count = int(
+    evacuation_summary[
+        "medical_cases"
+    ]
 )
-
-displacement_columns[2].metric(
-    "Affected, Not Displaced — Families",
-    f"{int(summary['affected_not_displaced_families']):,}",
-)
-
-displacement_columns[3].metric(
-    "Affected, Not Displaced — Individuals",
-    f"{int(summary['affected_not_displaced_individuals']):,}",
-)
-
-if int(
+population_consistency_count = int(
     summary[
         "population_consistency_issues"
     ]
-) > 0:
-    st.error(
-        "One or more current barangay reports contain "
-        "population figures that require correction."
+)
+
+attention_specs = (
+    (
+        _counted_label(
+            pending_rescue_count,
+            "Pending Rescue Request",
+        ),
+        pending_rescue_count,
+        "danger",
+    ),
+    (
+        _counted_label(
+            impassable_road_count,
+            "Impassable Road",
+        ),
+        impassable_road_count,
+        "danger",
+    ),
+    (
+        _counted_label(
+            power_interruption_count,
+            "Power Interruption",
+        ),
+        power_interruption_count,
+        "warning",
+    ),
+    (
+        _counted_label(
+            water_interruption_count,
+            "Water Interruption",
+        ),
+        water_interruption_count,
+        "warning",
+    ),
+    (
+        _counted_label(
+            over_capacity_center_count,
+            "Over-Capacity Center",
+        ),
+        over_capacity_center_count,
+        "danger",
+    ),
+    (
+        "Critical Food",
+        int(
+            evacuation_summary[
+                "critical_food"
+            ]
+        ),
+        "danger",
+    ),
+    (
+        "Critical Water",
+        int(
+            evacuation_summary[
+                "critical_water"
+            ]
+        ),
+        "danger",
+    ),
+    (
+        _counted_label(
+            medical_case_count,
+            "Medical Case",
+        ),
+        medical_case_count,
+        "warning",
+    ),
+    (
+        "Pending Validation",
+        int(
+            summary[
+                "pending_validation"
+            ]
+        ),
+        "warning",
+    ),
+    (
+        "Needs Correction",
+        int(
+            summary[
+                "needs_correction"
+            ]
+        ),
+        "danger",
+    ),
+    (
+        _counted_label(
+            population_consistency_count,
+            "Population Consistency Issue",
+        ),
+        population_consistency_count,
+        "danger",
+    ),
+    (
+        _counted_label(
+            reconciliation_issue_count,
+            "Reconciliation Issue",
+        ),
+        reconciliation_issue_count,
+        "warning",
+    ),
+)
+
+attention_items = [
+    {
+        "label": label,
+        "value": value,
+        "tone": tone,
+    }
+    for label, value, tone in attention_specs
+    if value > 0
+]
+
+if not dashboard[
+    "reconciliation_available"
+]:
+    attention_items.append(
+        {
+            "label": "Population Reconciliation",
+            "value": "Unavailable",
+            "tone": "warning",
+        }
     )
 
+render_dashboard_section_header(
+    title="Attention Required",
+    subtitle=(
+        "Current non-zero exceptions that may require operational "
+        "review or follow-up."
+    ),
+)
+
+render_attention_required(
+    attention_items
+)
+
+render_dashboard_section_header(
+    title="Situation Summary",
+    subtitle=(
+        "Primary population and evacuation indicators for the selected "
+        "data mode."
+    ),
+)
+
+render_kpi_grid(
+    [
+        {
+            "label": "Affected Barangays",
+            "value": f"{int(summary['affected_barangays']):,}",
+        },
+        {
+            "label": "Affected Families",
+            "value": f"{int(summary['affected_families']):,}",
+        },
+        {
+            "label": "Affected Individuals",
+            "value": f"{int(summary['affected_individuals']):,}",
+        },
+        {
+            "label": "Displaced Individuals",
+            "value": f"{int(summary['displaced_individuals']):,}",
+        },
+        {
+            "label": "Operational ECs",
+            "value": f"{int(evacuation_summary['open_centers']):,}",
+        },
+    ]
+)
+
+render_dashboard_section_header(
+    title="Population Breakdown",
+    subtitle=(
+        "Location of displaced people plus the affected population "
+        "not currently recorded as displaced."
+    ),
+)
+
+render_kpi_grid(
+    [
+        {
+            "label": "Inside EC — Families",
+            "value": f"{int(summary['inside_ec_families']):,}",
+        },
+        {
+            "label": "Outside EC — Families",
+            "value": f"{int(summary['outside_ec_families']):,}",
+        },
+        {
+            "label": "Not Displaced — Families",
+            "value": (
+                f"{int(summary['affected_not_displaced_families']):,}"
+            ),
+        },
+        {
+            "label": "Inside EC — Individuals",
+            "value": f"{int(summary['inside_ec_individuals']):,}",
+        },
+        {
+            "label": "Outside EC — Individuals",
+            "value": f"{int(summary['outside_ec_individuals']):,}",
+        },
+        {
+            "label": "Not Displaced — Individuals",
+            "value": (
+                f"{int(summary['affected_not_displaced_individuals']):,}"
+            ),
+        },
+    ],
+    compact=True,
+)
+
+render_dashboard_section_header(
+    title="Reporting & Freshness",
+    subtitle=(
+        "Coverage, validation workload, and age of the current source "
+        "reports."
+    ),
+)
+
+render_kpi_grid(
+    [
+        {
+            "label": "Barangays Reporting",
+            "value": (
+                f"{int(summary['reports_received'])}"
+                f" / "
+                f"{int(summary['total_barangays'])}"
+            ),
+            "meta": (
+                f"{float(summary['coverage_percent']):.1f}% coverage"
+            ),
+        },
+        {
+            "label": "Pending Validation",
+            "value": f"{int(summary['pending_validation']):,}",
+        },
+        {
+            "label": "Needs Correction",
+            "value": f"{int(summary['needs_correction']):,}",
+        },
+        {
+            "label": "Newest Barangay Report",
+            "value": format_age(
+                summary[
+                    "latest_update"
+                ]
+            ),
+            "meta": format_datetime(
+                summary[
+                    "latest_update"
+                ]
+            ),
+        },
+        {
+            "label": "Oldest Current Report",
+            "value": format_age(
+                summary[
+                    "oldest_current_update"
+                ]
+            ),
+            "meta": format_datetime(
+                summary[
+                    "oldest_current_update"
+                ]
+            ),
+        },
+        {
+            "label": "Newest EC Report",
+            "value": format_age(
+                evacuation_summary[
+                    "latest_update"
+                ]
+            ),
+            "meta": format_datetime(
+                evacuation_summary[
+                    "latest_update"
+                ]
+            ),
+        },
+    ],
+    compact=True,
+)
 
 st.divider()
-
-st.subheader(
-    "Immediate Operational Concerns"
-)
-
-concern_columns = st.columns(4)
-
-concern_columns[0].metric(
-    "Pending Rescue Requests",
-    int(
-        summary[
-            "pending_rescue_requests"
-        ]
-    ),
-)
-
-concern_columns[1].metric(
-    "Impassable Roads",
-    int(
-        summary[
-            "impassable_roads"
-        ]
-    ),
-)
-
-concern_columns[2].metric(
-    "Power Interruptions",
-    int(
-        summary[
-            "interrupted_power"
-        ]
-    ),
-)
-
-concern_columns[3].metric(
-    "Water Interruptions",
-    int(
-        summary[
-            "interrupted_water"
-        ]
-    ),
-)
-
-ec_concern_columns = st.columns(4)
-
-ec_concern_columns[0].metric(
-    "Over-Capacity Centers",
-    int(
-        evacuation_summary[
-            "over_capacity_centers"
-        ]
-    ),
-)
-
-ec_concern_columns[1].metric(
-    "Critical Food",
-    int(
-        evacuation_summary[
-            "critical_food"
-        ]
-    ),
-)
-
-ec_concern_columns[2].metric(
-    "Critical Water",
-    int(
-        evacuation_summary[
-            "critical_water"
-        ]
-    ),
-)
-
-ec_concern_columns[3].metric(
-    "Medical Cases",
-    int(
-        evacuation_summary[
-            "medical_cases"
-        ]
-    ),
-)
 
 
 barangay_tab, evacuation_tab, quality_tab = st.tabs(
@@ -955,10 +1137,6 @@ with quality_tab:
     st.subheader(
         "Barangay / Evacuation-Center Reconciliation"
     )
-
-    reconciliation_summary = dashboard[
-        "reconciliation_summary"
-    ]
 
     reconciliation_columns = st.columns(4)
 
