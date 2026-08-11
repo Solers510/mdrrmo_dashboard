@@ -210,3 +210,231 @@ def render_info_strip(
         </div>
         """
     )
+
+def _status_tone_from_label(
+    label: str,
+) -> str:
+    normalized = label.strip().upper()
+
+    if "RED" in normalized:
+        return "danger"
+
+    if "BLUE" in normalized:
+        return "info"
+
+    if (
+        "GREEN" in normalized
+        or "NORMAL" in normalized
+    ):
+        return "success"
+
+    if (
+        "YELLOW" in normalized
+        or "ORANGE" in normalized
+        or "AMBER" in normalized
+    ):
+        return "warning"
+
+    return "neutral"
+
+
+def _operational_field(
+    *,
+    label: str,
+    value: str,
+) -> str:
+    return f"""
+      <div class="mdrrmo-ops-field">
+        <span class="mdrrmo-ops-field__label">
+          {escape(label)}
+        </span>
+        <span class="mdrrmo-ops-field__value">
+          {escape(value)}
+        </span>
+      </div>
+    """
+
+
+def _alert_pill(
+    alert_code: str,
+) -> str:
+    alert_text = (
+        f"{alert_code.strip()} ALERT"
+        if alert_code.strip()
+        else "ALERT NOT SET"
+    )
+    tone = _status_tone_from_label(
+        alert_text
+    )
+
+    return f"""
+      <span
+        class="mdrrmo-ops-alert
+               mdrrmo-ops-alert--{tone}"
+        role="status"
+      >
+        {escape(alert_text)}
+      </span>
+    """
+
+
+def render_operational_page_header(
+    *,
+    title: str,
+    subtitle: str,
+) -> None:
+    """
+    Compact working-page header for operational screens.
+
+    Institutional identity remains in the persistent sidebar, so the page
+    header prioritizes task context instead of repeating a large hero card.
+    """
+    st.html(
+        f"""
+        <header class="mdrrmo-ops-page-header">
+          <p class="mdrrmo-ops-page-header__eyebrow">
+            OMDRRMO Naic Operations
+          </p>
+          <h1 class="mdrrmo-ops-page-header__title">
+            {escape(title)}
+          </h1>
+          <p class="mdrrmo-ops-page-header__subtitle">
+            {escape(subtitle)}
+          </p>
+        </header>
+        """
+    )
+
+
+def render_operational_event_strip(
+    *,
+    event_name: str,
+    hazard_type: str,
+    alert_code: str,
+    eoc_status: str,
+    sitrep: str,
+    official_reference: str | None = None,
+) -> None:
+    """
+    Compact active-event common-operating-picture strip.
+
+    Long event names, SitRep labels, references, and status values wrap
+    normally. No operational identifier is intentionally ellipsized.
+    """
+    reference_html = ""
+
+    if (
+        official_reference is not None
+        and official_reference.strip()
+    ):
+        reference_html = _operational_field(
+            label="Official Reference",
+            value=official_reference.strip(),
+        )
+
+    st.html(
+        f"""
+        <section class="mdrrmo-ops-event">
+          <div class="mdrrmo-ops-event__top">
+            <div class="mdrrmo-ops-event__identity">
+              <p class="mdrrmo-ops-event__eyebrow">
+                Active disaster event
+              </p>
+              <h2 class="mdrrmo-ops-event__name">
+                {escape(event_name)}
+              </h2>
+            </div>
+            <div class="mdrrmo-ops-event__alert">
+              {_alert_pill(alert_code)}
+            </div>
+          </div>
+
+          <div class="mdrrmo-ops-event__fields">
+            {_operational_field(
+                label="Hazard",
+                value=hazard_type,
+            )}
+            {_operational_field(
+                label="EOC Status",
+                value=eoc_status,
+            )}
+            {_operational_field(
+                label="Current SitRep",
+                value=sitrep,
+            )}
+            {reference_html}
+          </div>
+        </section>
+        """
+    )
+
+
+def render_event_control_strip(
+    *,
+    event_name: str,
+    hazard_type: str,
+    classification: str,
+    alert_code: str,
+    eoc_status: str,
+    sitrep: str,
+    started_at: str,
+    official_reference: str | None = None,
+) -> None:
+    """
+    Compact Event Control identity strip with full wrapping values.
+    """
+    reference_html = ""
+
+    if (
+        official_reference is not None
+        and official_reference.strip()
+    ):
+        reference_html = _operational_field(
+            label="Official Reference",
+            value=official_reference.strip(),
+        )
+
+    st.html(
+        f"""
+        <section class="mdrrmo-ops-event">
+          <div class="mdrrmo-ops-event__top">
+            <div class="mdrrmo-ops-event__identity">
+              <p class="mdrrmo-ops-event__eyebrow">
+                Current active event
+              </p>
+              <h2 class="mdrrmo-ops-event__name">
+                {escape(event_name)}
+              </h2>
+            </div>
+            <div class="mdrrmo-ops-event__alert">
+              {_alert_pill(alert_code)}
+            </div>
+          </div>
+
+          <div class="mdrrmo-ops-event__fields
+                      mdrrmo-ops-event__fields--control">
+            {_operational_field(
+                label="Hazard",
+                value=hazard_type,
+            )}
+            {_operational_field(
+                label="Classification",
+                value=classification,
+            )}
+            {_operational_field(
+                label="EOC Status",
+                value=eoc_status,
+            )}
+            {_operational_field(
+                label="Current SitRep",
+                value=sitrep,
+            )}
+            {_operational_field(
+                label="Started",
+                value=started_at,
+            )}
+            {reference_html}
+          </div>
+        </section>
+        """
+    )

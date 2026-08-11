@@ -14,6 +14,10 @@ from services.dashboard_service import (
     get_dashboard_bundle,
 )
 from utils.auth import require_permission
+from utils.ui import (
+    render_operational_event_strip,
+    render_operational_page_header,
+)
 
 
 current_user = require_permission(
@@ -228,11 +232,11 @@ def build_evacuation_table(
     )
 
 
-st.title(
-    "MDRRMO Naic Situation Dashboard"
-)
-st.caption(
-    "Current operational picture for the active disaster event."
+render_operational_page_header(
+    title="Situation Dashboard",
+    subtitle=(
+        "Current operational picture for the active disaster event."
+    ),
 )
 
 refresh_column, mode_column = st.columns(
@@ -292,45 +296,18 @@ if active_event is None:
     st.stop()
 
 
-event_columns = st.columns(4)
-
-event_columns[0].metric(
-    "Active Event",
-    event_display_name(
-        active_event
-    ),
-)
-
-event_columns[1].metric(
-    "Alert Level",
-    str(
-        active_event["alert_code"]
-    ),
-)
-
-event_columns[2].metric(
-    "EOC Status",
-    str(
-        active_event["eoc_status"]
-    ),
-)
-
 sitrep_value = (
     active_event.get(
         "current_sitrep_number"
     )
 )
-
-event_columns[3].metric(
-    "Current SitRep",
-    (
-        str(sitrep_value)
-        if sitrep_value not in {
-            None,
-            "",
-        }
-        else "Not set"
-    ),
+sitrep_text = (
+    str(sitrep_value)
+    if sitrep_value not in {
+        None,
+        "",
+    }
+    else "Not set"
 )
 
 reference = active_event.get(
@@ -340,10 +317,26 @@ overview = active_event.get(
     "situation_overview"
 )
 
-if reference:
-    st.caption(
-        f"Official reference: {reference}"
-    )
+render_operational_event_strip(
+    event_name=event_display_name(
+        active_event
+    ),
+    hazard_type=str(
+        active_event["hazard_type"]
+    ),
+    alert_code=str(
+        active_event["alert_code"]
+    ),
+    eoc_status=str(
+        active_event["eoc_status"]
+    ),
+    sitrep=sitrep_text,
+    official_reference=(
+        str(reference)
+        if reference
+        else None
+    ),
+)
 
 if overview:
     with st.expander(

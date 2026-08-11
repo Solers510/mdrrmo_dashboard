@@ -32,6 +32,10 @@ from services.event_service import (
     update_event_details,
 )
 from utils.auth import require_permission
+from utils.ui import (
+    render_event_control_strip,
+    render_operational_page_header,
+)
 
 
 current_user = require_permission(
@@ -93,11 +97,12 @@ def show_service_error(
     st.error(str(error))
 
 
-st.title("Event Control")
-
-st.caption(
-    "Create, update, escalate, stand down, "
-    "close, and audit the current disaster event."
+render_operational_page_header(
+    title="Event Control",
+    subtitle=(
+        "Create, update, escalate, stand down, close, "
+        "and audit the current disaster event."
+    ),
 )
 
 
@@ -442,63 +447,53 @@ if active_event is None:
     st.stop()
 
 
-st.subheader(
-    display_event_name(
+render_event_control_strip(
+    event_name=display_event_name(
         active_event
-    )
-)
-
-summary_columns = st.columns(4)
-
-with summary_columns[0]:
-    st.metric(
-        "Hazard",
-        str(
-            active_event[
-                "hazard_type"
-            ]
-        ),
-    )
-
-with summary_columns[1]:
-    st.metric(
-        "Classification",
-        str(
-            active_event.get(
-                "classification"
-            )
-            or "—"
-        ),
-    )
-
-with summary_columns[2]:
-    st.metric(
-        "Alert Level",
-        str(
-            active_event[
-                "alert_code"
-            ]
-        ),
-    )
-
-with summary_columns[3]:
-    st.metric(
-        "EOC Status",
-        str(
-            active_event[
-                "eoc_status"
-            ]
-        ),
-    )
-
-
-st.caption(
-    "Started: "
-    + format_datetime(
+    ),
+    hazard_type=str(
+        active_event[
+            "hazard_type"
+        ]
+    ),
+    classification=str(
+        active_event.get(
+            "classification"
+        )
+        or "Not applicable"
+    ),
+    alert_code=str(
+        active_event[
+            "alert_code"
+        ]
+    ),
+    eoc_status=str(
+        active_event[
+            "eoc_status"
+        ]
+    ),
+    sitrep=str(
+        active_event[
+            "current_sitrep_number"
+        ]
+        or "Not provided"
+    ),
+    started_at=format_datetime(
         active_event[
             "started_at"
         ]
-    )
+    ),
+    official_reference=(
+        str(
+            active_event[
+                "official_reference"
+            ]
+        )
+        if active_event[
+            "official_reference"
+        ]
+        else None
+    ),
 )
 
 
