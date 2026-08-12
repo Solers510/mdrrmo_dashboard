@@ -36,6 +36,13 @@ from services.event_service import (
     get_active_event_summary,
 )
 from utils.auth import require_permission
+from utils.ui import (
+    render_dashboard_section_header,
+    render_kpi_grid,
+    render_operational_event_strip,
+    render_operational_page_header,
+    render_workflow_section,
+)
 
 
 current_user = require_permission(
@@ -69,12 +76,87 @@ def select_index(
         return fallback
 
 
-st.title("Barangay Situation Update")
+def format_report_age(
+    value: datetime | None,
+) -> str:
+    if value is None:
+        return "—"
 
-st.caption(
-    "Record affected, inside-evacuation, and outside-evacuation figures. "
-    "The latest evacuation-center totals are prefilled as a reference, "
-    "but the barangay encoder can enter a newer verified count."
+    current = datetime.now(
+        MANILA_TIMEZONE
+    )
+    localized = value.astimezone(
+        MANILA_TIMEZONE
+    )
+    seconds = max(
+        int(
+            (
+                current
+                - localized
+            ).total_seconds()
+        ),
+        0,
+    )
+
+    if seconds < 60:
+        return "<1m"
+
+    minutes = seconds // 60
+
+    if minutes < 60:
+        return f"{minutes}m"
+
+    hours = minutes // 60
+
+    if hours < 24:
+        return f"{hours}h"
+
+    return f"{hours // 24}d"
+
+
+def display_event_name(
+    event: dict[str, object],
+) -> str:
+    classification = event.get(
+        "classification"
+    )
+    name = str(
+        event["event_name"]
+    )
+
+    if (
+        classification is not None
+        and str(classification).strip()
+    ):
+        return (
+            f"{classification} {name}"
+        )
+
+    return name
+
+
+def display_sitrep(
+    event: dict[str, object],
+) -> str:
+    value = event.get(
+        "current_sitrep_number"
+    )
+
+    if value in {
+        None,
+        "",
+    }:
+        return "Not set"
+
+    return str(value)
+
+
+render_operational_page_header(
+    title="Barangay Situation Update",
+    subtitle=(
+        "Record the latest barangay population, evacuation, access, "
+        "utility, rescue, and source information for the active event."
+    ),
 )
 
 
@@ -109,25 +191,34 @@ if active_event is None:
     st.stop()
 
 
-event_columns = st.columns(3)
-
-with event_columns[0]:
-    st.metric(
-        "Active Event",
-        str(active_event["event_name"]),
-    )
-
-with event_columns[1]:
-    st.metric(
-        "Alert Level",
-        str(active_event["alert_code"]),
-    )
-
-with event_columns[2]:
-    st.metric(
-        "EOC Status",
-        str(active_event["eoc_status"]),
-    )
+render_operational_event_strip(
+    event_name=display_event_name(
+        active_event
+    ),
+    hazard_type=str(
+        active_event["hazard_type"]
+    ),
+    alert_code=str(
+        active_event["alert_code"]
+    ),
+    eoc_status=str(
+        active_event["eoc_status"]
+    ),
+    sitrep=display_sitrep(
+        active_event
+    ),
+    official_reference=(
+        str(
+            active_event[
+                "official_reference"
+            ]
+        )
+        if active_event.get(
+            "official_reference"
+        )
+        else None
+    ),
+)
 
 
 try:
@@ -158,13 +249,12 @@ barangay_labels = list(
 )
 
 
-st.divider()
-
-st.subheader("New Barangay Report")
-
-st.caption(
-    f"Submitting as {current_user.display_name} "
-    f"— {current_user.role}"
+render_dashboard_section_header(
+    title="Submit Barangay Situation Report",
+    subtitle=(
+        f"Submitting as {current_user.display_name} — {current_user.role}. "
+        "Required fields are marked with an asterisk."
+    ),
 )
 
 
@@ -188,6 +278,15 @@ if token_state_key not in st.session_state:
         token_state_key
     ] = str(uuid4())
 
+
+render_workflow_section(
+    step=1,
+    title="Select Barangay",
+    subtitle=(
+        "Choose the reporting barangay. Form state is isolated by barangay "
+        "so figures do not carry over when the selection changes."
+    ),
+)
 
 selected_label = st.selectbox(
     "Barangay *",
@@ -275,50 +374,42 @@ if pending_correction is not None:
     )
 
 
-st.markdown(
-    "### Inside evacuation centers"
+render_workflow_section(
+    step=2,
+    title="Inside Evacuation Centers",
+    subtitle=(
+        "Use the latest evacuation-center figures as reference. Enter a "
+        "newer verified barangay count when available; differences are "
+        "flagged for reconciliation rather than blocked."
+    ),
+)
+
+render_kpi_grid(
+    [
+        {
+            "label": "EC Reference — Families",
+            "value": (
+                f"{int(entry_context['inside_ec_families']):,}"
+            ),
+        },
+        {
+            "label": "EC Reference — Individuals",
+            "value": (
+                f"{int(entry_context['inside_ec_individuals']):,}"
+            ),
+        },
+        {
+            "label": "Operational Centers",
+            "value": (
+                f"{int(entry_context['operational_centers']):,}"
+            ),
+        },
+    ],
+    compact=True,
 )
 
 st.caption(
-    "Latest evacuation-center records are used as the default. "
-    "If the barangay has a newer verified count, update the fields below. "
-    "A difference is flagged for reconciliation instead of blocking entry."
-)
-
-reference_columns = st.columns(3)
-
-with reference_columns[0]:
-    st.metric(
-        "Latest EC record — families",
-        int(
-            entry_context[
-                "inside_ec_families"
-            ]
-        ),
-    )
-
-with reference_columns[1]:
-    st.metric(
-        "Latest EC record — individuals",
-        int(
-            entry_context[
-                "inside_ec_individuals"
-            ]
-        ),
-    )
-
-with reference_columns[2]:
-    st.metric(
-        "Operational centers",
-        int(
-            entry_context[
-                "operational_centers"
-            ]
-        ),
-    )
-
-st.caption(
-    "Latest EC data: "
+    "Reference updated: "
     + format_datetime(
         entry_context[
             "latest_ec_update"
@@ -330,7 +421,7 @@ inside_columns = st.columns(2)
 
 with inside_columns[0]:
     inside_ec_families = st.number_input(
-        "Families inside evacuation centers",
+        "Families inside EC",
         min_value=0,
         step=1,
         value=(
@@ -347,7 +438,7 @@ with inside_columns[0]:
 
 with inside_columns[1]:
     inside_ec_individuals = st.number_input(
-        "Individuals inside evacuation centers",
+        "Individuals inside EC",
         min_value=0,
         step=1,
         value=(
@@ -386,8 +477,13 @@ if ec_reference_mismatch:
     )
 
 
-st.markdown(
-    "### Affected population"
+render_workflow_section(
+    step=3,
+    title="Affected Population",
+    subtitle=(
+        "Record the total affected families and individuals for this "
+        "barangay before separating displaced populations."
+    ),
 )
 
 affected_columns = st.columns(2)
@@ -425,15 +521,20 @@ with affected_columns[1]:
     )
 
 
-st.markdown(
-    "### Outside evacuation centers"
+render_workflow_section(
+    step=4,
+    title="Outside Evacuation Centers",
+    subtitle=(
+        "Record displaced families and individuals staying outside formal "
+        "evacuation centers."
+    ),
 )
 
 outside_columns = st.columns(2)
 
 with outside_columns[0]:
     outside_ec_families = st.number_input(
-        "Families outside evacuation centers",
+        "Families outside EC",
         min_value=0,
         step=1,
         value=(
@@ -450,7 +551,7 @@ with outside_columns[0]:
 with outside_columns[1]:
     outside_ec_individuals = (
         st.number_input(
-            "Individuals outside evacuation centers",
+            "Individuals outside EC",
             min_value=0,
             step=1,
             value=(
@@ -495,38 +596,43 @@ except DataIntegrityValidationError as error:
     preview_error = str(error)
 
 
-st.markdown(
-    "### Population reconciliation"
+render_dashboard_section_header(
+    title="Automatic Population Check",
+    subtitle=(
+        "The system verifies that displaced and remaining populations are "
+        "consistent with the affected totals before submission."
+    ),
 )
 
 if reconciliation is not None:
-    reconciliation_columns = (
-        st.columns(4)
+    render_kpi_grid(
+        [
+            {
+                "label": "Displaced Families",
+                "value": (
+                    f"{int(reconciliation.displaced_families):,}"
+                ),
+            },
+            {
+                "label": "Displaced Individuals",
+                "value": (
+                    f"{int(reconciliation.displaced_individuals):,}"
+                ),
+            },
+            {
+                "label": "Not Displaced — Families",
+                "value": (
+                    f"{int(reconciliation.remaining_families):,}"
+                ),
+            },
+            {
+                "label": "Not Displaced — Individuals",
+                "value": (
+                    f"{int(reconciliation.remaining_individuals):,}"
+                ),
+            },
+        ]
     )
-
-    with reconciliation_columns[0]:
-        st.metric(
-            "Displaced families",
-            reconciliation.displaced_families,
-        )
-
-    with reconciliation_columns[1]:
-        st.metric(
-            "Displaced individuals",
-            reconciliation.displaced_individuals,
-        )
-
-    with reconciliation_columns[2]:
-        st.metric(
-            "Affected, not displaced — families",
-            reconciliation.remaining_families,
-        )
-
-    with reconciliation_columns[3]:
-        st.metric(
-            "Affected, not displaced — individuals",
-            reconciliation.remaining_individuals,
-        )
 
     st.success(
         "Population figures are internally consistent."
@@ -535,6 +641,15 @@ if reconciliation is not None:
 else:
     st.error(preview_error)
 
+
+render_workflow_section(
+    step=5,
+    title="Operational Conditions",
+    subtitle=(
+        "Record the current situation, flooding, road access, utilities, "
+        "and any pending rescue demand."
+    ),
+)
 
 situation_status = st.selectbox(
     "Situation status *",
@@ -551,10 +666,6 @@ situation_status = st.selectbox(
     key=prefix + "situation_status",
 )
 
-
-st.markdown(
-    "### Hazard and utility conditions"
-)
 
 hazard_columns = st.columns(2)
 
@@ -656,6 +767,15 @@ except DataIntegrityValidationError as error:
     flood_error = str(error)
     st.error(flood_error)
 
+
+render_workflow_section(
+    step=6,
+    title="Source & Submit",
+    subtitle=(
+        "Identify the source, add useful context, review the figures, and "
+        "submit the report for validation."
+    ),
+)
 
 source = st.text_input(
     "Information source *",
@@ -786,8 +906,12 @@ if st.button(
 
 st.divider()
 
-st.subheader(
-    "Recent Barangay Reports"
+render_dashboard_section_header(
+    title="Recent Barangay Reports",
+    subtitle=(
+        "Recent submissions for the active event, including validation "
+        "status and source timing."
+    ),
 )
 
 
@@ -810,41 +934,195 @@ if not recent_updates:
     )
 
 else:
-    table_rows = [
-        {
-            "ID": row["id"],
-            "Barangay": row["barangay_name"],
-            "Situation": row[
-                "situation_status"
-            ],
-            "Affected Families": row[
+    routine_rows = []
+
+    for row in recent_updates:
+        affected_families = int(
+            row[
                 "affected_families"
-            ],
-            "Affected Individuals": row[
+            ]
+        )
+        affected_individuals = int(
+            row[
                 "affected_individuals"
-            ],
-            "Inside EC": row[
-                "inside_ec_individuals"
-            ],
-            "Outside EC": row[
-                "outside_ec_individuals"
-            ],
-            "Rescue Requests": row[
-                "rescue_requests"
-            ],
-            "Validation": row[
-                "validation_status"
-            ],
-            "Source": row["source"],
-            "Recorded At": row[
-                "recorded_at"
-            ],
-        }
-        for row in recent_updates
-    ]
+            ]
+        )
+        displaced_individuals = (
+            int(
+                row[
+                    "inside_ec_individuals"
+                ]
+            )
+            + int(
+                row[
+                    "outside_ec_individuals"
+                ]
+            )
+        )
+
+        routine_rows.append(
+            {
+                "Report": int(
+                    row[
+                        "id"
+                    ]
+                ),
+                "Barangay": (
+                    row[
+                        "barangay_name"
+                    ]
+                ),
+                "Situation": (
+                    row[
+                        "situation_status"
+                    ]
+                ),
+                "Affected F / I": (
+                    f"{affected_families:,} / "
+                    f"{affected_individuals:,}"
+                ),
+                "Displaced Individuals": (
+                    displaced_individuals
+                ),
+                "Rescue": int(
+                    row[
+                        "rescue_requests"
+                    ]
+                ),
+                "Validation": (
+                    row[
+                        "validation_status"
+                    ]
+                ),
+                "Age": format_report_age(
+                    row[
+                        "recorded_at"
+                    ]
+                ),
+            }
+        )
 
     st.dataframe(
-        pd.DataFrame(table_rows),
+        pd.DataFrame(
+            routine_rows
+        ),
         width="stretch",
         hide_index=True,
+        column_order=(
+            "Report",
+            "Barangay",
+            "Situation",
+            "Affected F / I",
+            "Displaced Individuals",
+            "Rescue",
+            "Validation",
+            "Age",
+        ),
+        column_config={
+            "Report": (
+                st.column_config.NumberColumn(
+                    "#",
+                    width=55,
+                    format="%d",
+                )
+            ),
+            "Barangay": (
+                st.column_config.TextColumn(
+                    "Barangay",
+                    width=155,
+                    pinned=True,
+                )
+            ),
+            "Situation": (
+                st.column_config.TextColumn(
+                    "Situation",
+                    width=95,
+                )
+            ),
+            "Affected F / I": (
+                st.column_config.TextColumn(
+                    "Affected F / I",
+                    help=(
+                        "Affected families / affected individuals"
+                    ),
+                    width=105,
+                )
+            ),
+            "Displaced Individuals": (
+                st.column_config.NumberColumn(
+                    "Displaced",
+                    help=(
+                        "Individuals inside + outside evacuation centers"
+                    ),
+                    width=82,
+                    format="%d",
+                )
+            ),
+            "Rescue": (
+                st.column_config.NumberColumn(
+                    "Rescue",
+                    width=68,
+                    format="%d",
+                )
+            ),
+            "Validation": (
+                st.column_config.TextColumn(
+                    "Validation",
+                    width=110,
+                )
+            ),
+            "Age": (
+                st.column_config.TextColumn(
+                    "Age",
+                    width=60,
+                )
+            ),
+        },
     )
+
+    with st.expander(
+        "Full recent report fields",
+        expanded=False,
+    ):
+        full_rows = [
+            {
+                "ID": row["id"],
+                "Barangay": row["barangay_name"],
+                "Situation": row[
+                    "situation_status"
+                ],
+                "Affected Families": row[
+                    "affected_families"
+                ],
+                "Affected Individuals": row[
+                    "affected_individuals"
+                ],
+                "Inside EC": row[
+                    "inside_ec_individuals"
+                ],
+                "Outside EC": row[
+                    "outside_ec_individuals"
+                ],
+                "Rescue Requests": row[
+                    "rescue_requests"
+                ],
+                "Validation": row[
+                    "validation_status"
+                ],
+                "Source": row[
+                    "source"
+                ],
+                "Recorded At": row[
+                    "recorded_at"
+                ],
+            }
+            for row in recent_updates
+        ]
+
+        st.dataframe(
+            pd.DataFrame(
+                full_rows
+            ),
+            width="stretch",
+            hide_index=True,
+        )

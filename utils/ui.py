@@ -621,3 +621,39 @@ def render_kpi_grid(
         </section>
         """
     )
+def render_workflow_section(
+    *,
+    step: int,
+    title: str,
+    subtitle: str,
+) -> None:
+    """
+    Render a compact numbered workflow heading for operational data-entry
+    screens. The number communicates sequence; the text remains the primary
+    accessible cue.
+    """
+    if step < 1:
+        raise ValueError(
+            "Workflow step must be at least 1."
+        )
+
+    st.html(
+        f"""
+        <header class="mdrrmo-workflow-section">
+          <span
+            class="mdrrmo-workflow-section__step"
+            aria-hidden="true"
+          >
+            {step}
+          </span>
+          <div class="mdrrmo-workflow-section__copy">
+            <h2 class="mdrrmo-workflow-section__title">
+              {escape(title)}
+            </h2>
+            <p class="mdrrmo-workflow-section__subtitle">
+              {escape(subtitle)}
+            </p>
+          </div>
+        </header>
+        """
+    )

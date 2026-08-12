@@ -676,3 +676,55 @@
         grid-template-columns: 1fr;
     }
 }
+/* Phase 11C1 — operational data-entry workflow */
+.mdrrmo-workflow-section {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.68rem;
+    margin: 1.2rem 0 0.62rem 0;
+    padding-top: 0.15rem;
+}
+
+.mdrrmo-workflow-section__step {
+    display: inline-flex;
+    flex: 0 0 1.72rem;
+    align-items: center;
+    justify-content: center;
+    width: 1.72rem;
+    height: 1.72rem;
+    margin-top: 0.02rem;
+    color: #FFFFFF;
+    background: var(--gov-blue);
+    border-radius: 999px;
+    font-family: var(--font-body);
+    font-size: 0.74rem;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.mdrrmo-workflow-section__copy {
+    min-width: 0;
+}
+
+.mdrrmo-workflow-section__title {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 0.98rem;
+    font-weight: 780;
+    line-height: 1.25;
+}
+
+.mdrrmo-workflow-section__subtitle {
+    margin: 0.12rem 0 0 0;
+    color: var(--text-muted);
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+@media (max-width: 700px) {
+    .mdrrmo-workflow-section {
+        gap: 0.55rem;
+    }
+}
