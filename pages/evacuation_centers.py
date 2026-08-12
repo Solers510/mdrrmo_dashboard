@@ -1,4 +1,6 @@
+from datetime import datetime
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -43,6 +45,13 @@ from config.access_control import (
     PERMISSION_SUBMIT_EVACUATION_UPDATES,
 )
 from utils.auth import has_permission, require_any_permission
+from utils.ui import (
+    render_dashboard_section_header,
+    render_kpi_grid,
+    render_operational_event_strip,
+    render_operational_page_header,
+    render_workflow_section,
+)
 
 
 current_user = require_any_permission(
@@ -68,11 +77,50 @@ def select_index(
         return fallback
 
 
-st.title("Evacuation Center Monitoring")
+MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 
-st.caption(
-    "Manage evacuation-center records and preserve "
-    "occupancy and service-condition updates."
+
+def format_report_age(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+
+    now = datetime.now(MANILA_TIMEZONE)
+    localized = value.astimezone(MANILA_TIMEZONE)
+    seconds = max(int((now - localized).total_seconds()), 0)
+
+    if seconds < 60:
+        return "<1m"
+
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h"
+
+    return f"{hours // 24}d"
+
+
+def display_event_name(event: dict[str, object]) -> str:
+    classification = event.get("classification")
+    name = str(event["event_name"])
+    if classification is not None and str(classification).strip():
+        return f"{classification} {name}"
+    return name
+
+
+def display_sitrep(event: dict[str, object]) -> str:
+    value = event.get("current_sitrep_number")
+    return "Not set" if value in {None, ""} else str(value)
+
+
+render_operational_page_header(
+    title="Evacuation Center Monitoring",
+    subtitle=(
+        "Record occupancy, vulnerable populations, essential services, "
+        "cross-barangay allocations, and source information."
+    ),
 )
 
 
@@ -108,28 +156,18 @@ if active_event is None:
     st.stop()
 
 
-event_columns = st.columns(3)
-
-with event_columns[0]:
-    st.metric(
-        "Active Event",
-        str(active_event["event_name"]),
-    )
-
-with event_columns[1]:
-    st.metric(
-        "Alert Level",
-        str(active_event["alert_code"]),
-    )
-
-with event_columns[2]:
-    st.metric(
-        "EOC Status",
-        str(active_event["eoc_status"]),
-    )
-
-
-st.divider()
+render_operational_event_strip(
+    event_name=display_event_name(active_event),
+    hazard_type=str(active_event["hazard_type"]),
+    alert_code=str(active_event["alert_code"]),
+    eoc_status=str(active_event["eoc_status"]),
+    sitrep=display_sitrep(active_event),
+    official_reference=(
+        str(active_event["official_reference"])
+        if active_event.get("official_reference")
+        else None
+    ),
+)
 
 
 try:
@@ -154,12 +192,12 @@ barangay_label_to_id = {
 barangay_labels = list(barangay_label_to_id.keys())
 
 
-manage_tab, update_tab, cross_tab, history_tab = st.tabs(
+update_tab, manage_tab, cross_tab, history_tab = st.tabs(
     (
-        "Manage Centers",
-        "Record Occupancy Update",
-        "Cross-Barangay Allocation",
-        "Recent Updates",
+        "Occupancy Update",
+        f"Center Registry ({len(centers)})",
+        "Cross-Barangay",
+        "Recent Reports",
     )
 )
 
@@ -169,7 +207,15 @@ manage_tab, update_tab, cross_tab, history_tab = st.tabs(
 # ---------------------------------------------------------
 
 with manage_tab:
-    st.subheader("Add Evacuation Center")
+    render_dashboard_section_header(
+        title="Evacuation Center Registry",
+        subtitle=(
+            "Create and review official center master records. Only authorized "
+            "operations staff may add centers."
+        ),
+    )
+
+    st.markdown("**Add official evacuation center**")
 
     if not can_manage_centers:
         st.warning(
@@ -202,7 +248,7 @@ with manage_tab:
         )
 
         safe_capacity = st.number_input(
-            "Official safe-capacity value",
+            "Safe capacity *",
             min_value=0,
             step=1,
             help=(
@@ -274,7 +320,12 @@ with manage_tab:
 
                 st.rerun()
 
-    st.subheader("Active Evacuation Centers")
+    render_dashboard_section_header(
+        title="Active Evacuation Centers",
+        subtitle=(
+            "Current official center records available for operational reporting."
+        ),
+    )
 
     if not centers:
         st.info(
@@ -288,7 +339,7 @@ with manage_tab:
                     "ID": center["id"],
                     "Center": center["name"],
                     "Barangay": center["barangay_name"],
-                    "Address": center["address"],
+                    "Address": center["address"] or "—",
                     "Safe Capacity": (
                         center["safe_capacity"]
                     ),
@@ -309,7 +360,13 @@ with manage_tab:
 # ---------------------------------------------------------
 
 with update_tab:
-    st.subheader("New Evacuation-Center Report")
+    render_dashboard_section_header(
+        title="Record Evacuation-Center Report",
+        subtitle=(
+            f"Submitting as {current_user.display_name} — {current_user.role}. "
+            "Required fields are marked with an asterisk."
+        ),
+    )
 
     if not centers:
         st.warning(
@@ -318,6 +375,15 @@ with update_tab:
         )
 
     else:
+        render_workflow_section(
+            step=1,
+            title="Select Evacuation Center",
+            subtitle=(
+                "Choose the center being reported. Correction-required reports "
+                "for the selected center load automatically."
+            ),
+        )
+
         center_label_to_id = {
             (
                 f"{center['name']} — "
@@ -357,6 +423,30 @@ with update_tab:
             center_label_to_id[
                 selected_center_label
             ]
+        )
+
+        selected_center = next(
+            center
+            for center in centers
+            if int(center["id"]) == int(selected_center_id)
+        )
+
+        render_kpi_grid(
+            [
+                {
+                    "label": "Host Barangay",
+                    "value": str(selected_center["barangay_name"]),
+                },
+                {
+                    "label": "Safe Capacity",
+                    "value": f"{int(selected_center['safe_capacity'] or 0):,}",
+                },
+                {
+                    "label": "Registry ID",
+                    "value": f"#{int(selected_center['id'])}",
+                },
+            ],
+            compact=True,
         )
 
         try:
@@ -431,6 +521,15 @@ with update_tab:
             ),
             clear_on_submit=False,
         ):
+            render_workflow_section(
+                step=2,
+                title="Status & Occupancy",
+                subtitle=(
+                    "Record the center operating status and current registered "
+                    "families and individuals."
+                ),
+            )
+
             status = st.selectbox(
                 "Center status *",
                 options=EVACUATION_CENTER_STATUSES,
@@ -443,8 +542,6 @@ with update_tab:
                     else 0
                 ),
             )
-
-            st.markdown("### Occupancy")
 
             occupancy_columns = st.columns(2)
 
@@ -472,7 +569,14 @@ with update_tab:
                     ),
                 )
 
-            st.markdown("### Vulnerable groups")
+            render_workflow_section(
+                step=3,
+                title="Vulnerable Groups",
+                subtitle=(
+                    "Record vulnerable evacuees and current medical cases from "
+                    "the latest verified center register."
+                ),
+            )
 
             vulnerable_row_1 = st.columns(3)
 
@@ -538,7 +642,13 @@ with update_tab:
                     ),
                 )
 
-            st.markdown("### Essential services")
+            render_workflow_section(
+                step=4,
+                title="Essential Services",
+                subtitle=(
+                    "Record food, water, electricity, and sanitation conditions."
+                ),
+            )
 
             service_columns = st.columns(3)
 
@@ -593,6 +703,15 @@ with update_tab:
                 ),
                 placeholder=(
                     "Use the wording from the official form."
+                ),
+            )
+
+            render_workflow_section(
+                step=5,
+                title="Source & Submit",
+                subtitle=(
+                    "Identify the source, add useful context, review the report, "
+                    "and submit it for validation."
                 ),
             )
 
@@ -718,12 +837,12 @@ with update_tab:
 # ---------------------------------------------------------
 
 with cross_tab:
-    st.subheader("Cross-Barangay Evacuation Allocation")
-
-    st.caption(
-        "Use this only when evacuees are staying in an evacuation "
-        "center outside their home barangay. Normal barangay-to-own-center "
-        "reporting does not require this form."
+    render_dashboard_section_header(
+        title="Cross-Barangay Evacuation Allocation",
+        subtitle=(
+            "Use this exception workflow only when evacuees are staying in a "
+            "center outside their home barangay."
+        ),
     )
 
     if not can_manage_centers:
@@ -766,22 +885,28 @@ with cross_tab:
                     "Record the center occupancy first."
                 )
             else:
-                occupancy_columns = st.columns(4)
-                occupancy_columns[0].metric(
-                    "Latest EC Families",
-                    int(latest_update["families"]),
-                )
-                occupancy_columns[1].metric(
-                    "Latest EC Individuals",
-                    int(latest_update["individuals"]),
-                )
-                occupancy_columns[2].metric(
-                    "Center Status",
-                    str(latest_update["status"]),
-                )
-                occupancy_columns[3].metric(
-                    "Current Foreign Origins",
-                    len(cross_context["current_allocations"]),
+                render_kpi_grid(
+                    [
+                        {
+                            "label": "Latest EC Families",
+                            "value": f"{int(latest_update['families']):,}",
+                        },
+                        {
+                            "label": "Latest EC Individuals",
+                            "value": f"{int(latest_update['individuals']):,}",
+                        },
+                        {
+                            "label": "Center Status",
+                            "value": str(latest_update["status"]),
+                        },
+                        {
+                            "label": "Foreign Origins",
+                            "value": (
+                                f"{len(cross_context['current_allocations']):,}"
+                            ),
+                        },
+                    ],
+                    compact=True,
                 )
 
                 origin_options = [
@@ -932,8 +1057,11 @@ with cross_tab:
                                 )
                                 st.rerun()
 
-        st.markdown(
-            "#### Current Cross-Barangay Allocations"
+        render_dashboard_section_header(
+            title="Current Cross-Barangay Allocations",
+            subtitle=(
+                "Active origin-to-host center allocations for the current event."
+            ),
         )
 
         try:
@@ -949,24 +1077,72 @@ with cross_tab:
                 "No active cross-barangay allocations are recorded."
             )
         else:
+            routine_allocation_rows = [
+                {
+                    "Center": row["center_name"],
+                    "Origin Barangay": row["origin_barangay_name"],
+                    "Families": int(row["families"]),
+                    "Individuals": int(row["individuals"]),
+                    "Age": format_report_age(row["recorded_at"]),
+                }
+                for row in current_allocations
+            ]
+
             st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "Center": row["center_name"],
-                            "Origin Barangay": row["origin_barangay_name"],
-                            "Families": row["families"],
-                            "Individuals": row["individuals"],
-                            "Source": row["source"],
-                            "Recorded By": row["recorded_by"],
-                            "Recorded At": row["recorded_at"],
-                        }
-                        for row in current_allocations
-                    ]
-                ),
+                pd.DataFrame(routine_allocation_rows),
                 width="stretch",
                 hide_index=True,
+                column_config={
+                    "Center": st.column_config.TextColumn(
+                        "Center",
+                        width=220,
+                        pinned=True,
+                    ),
+                    "Origin Barangay": st.column_config.TextColumn(
+                        "Origin Barangay",
+                        width=160,
+                    ),
+                    "Families": st.column_config.NumberColumn(
+                        "Families",
+                        width=80,
+                        format="%d",
+                    ),
+                    "Individuals": st.column_config.NumberColumn(
+                        "Individuals",
+                        width=90,
+                        format="%d",
+                    ),
+                    "Age": st.column_config.TextColumn(
+                        "Age",
+                        width=60,
+                    ),
+                },
             )
+
+            with st.expander(
+                "Full allocation source fields",
+                expanded=False,
+            ):
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Center": row["center_name"],
+                                "Origin Barangay": (
+                                    row["origin_barangay_name"]
+                                ),
+                                "Families": row["families"],
+                                "Individuals": row["individuals"],
+                                "Source": row["source"],
+                                "Recorded By": row["recorded_by"],
+                                "Recorded At": row["recorded_at"],
+                            }
+                            for row in current_allocations
+                        ]
+                    ),
+                    width="stretch",
+                    hide_index=True,
+                )
 
 
 # ---------------------------------------------------------
@@ -974,25 +1150,103 @@ with cross_tab:
 # ---------------------------------------------------------
 
 with history_tab:
-    st.subheader("Recent Evacuation-Center Updates")
+    render_dashboard_section_header(
+        title="Recent Evacuation-Center Reports",
+        subtitle=(
+            "Routine view prioritizing center status, occupancy, essential "
+            "services, medical demand, validation, and report age."
+        ),
+    )
 
     try:
-        recent_updates = get_recent_evacuation_updates(
-            limit=20
-        )
-
+        recent_updates = get_recent_evacuation_updates(limit=20)
     except EvacuationServiceError as error:
         st.error(str(error))
         recent_updates = []
 
     if not recent_updates:
-        st.info(
-            "No evacuation-center reports have been saved."
+        st.info("No evacuation-center reports have been saved.")
+    else:
+        routine_rows = [
+            {
+                "Center": update["center_name"],
+                "Status": update["status"],
+                "Occupancy F / I": (
+                    f"{int(update['families']):,} / "
+                    f"{int(update['individuals']):,}"
+                ),
+                "Services": (
+                    f"{update['food_status']} · "
+                    f"{update['water_status']} · "
+                    f"{update['electricity_status']}"
+                ),
+                "Medical": int(update["medical_cases"]),
+                "Validation": update["validation_status"],
+                "Age": format_report_age(update["recorded_at"]),
+            }
+            for update in recent_updates
+        ]
+
+        st.dataframe(
+            pd.DataFrame(routine_rows),
+            width="stretch",
+            hide_index=True,
+            column_order=(
+                "Center",
+                "Status",
+                "Occupancy F / I",
+                "Services",
+                "Medical",
+                "Validation",
+                "Age",
+            ),
+            column_config={
+                "Center": st.column_config.TextColumn(
+                    "Center",
+                    width=230,
+                    pinned=True,
+                ),
+                "Status": st.column_config.TextColumn(
+                    "Status",
+                    width=75,
+                ),
+                "Occupancy F / I": st.column_config.TextColumn(
+                    "Occupancy F / I",
+                    help="Registered families / registered individuals",
+                    width=105,
+                ),
+                "Services": st.column_config.TextColumn(
+                    "Food · Water · Power",
+                    help=(
+                        "Food status · water status · electricity status"
+                    ),
+                    width=205,
+                ),
+                "Medical": st.column_config.NumberColumn(
+                    "Medical",
+                    width=65,
+                    format="%d",
+                ),
+                "Validation": st.column_config.TextColumn(
+                    "Validation",
+                    width=105,
+                ),
+                "Age": st.column_config.TextColumn(
+                    "Age",
+                    width=55,
+                ),
+            },
         )
 
-    else:
-        recent_table = pd.DataFrame(
-            [
+        st.caption(
+            "Host barangay and complete source fields are available below."
+        )
+
+        with st.expander(
+            "Full recent report fields",
+            expanded=False,
+        ):
+            full_rows = [
                 {
                     "ID": update["id"],
                     "Center": update["center_name"],
@@ -1001,33 +1255,22 @@ with history_tab:
                     "Families": update["families"],
                     "Individuals": update["individuals"],
                     "Children": update["children"],
-                    "Senior Citizens": (
-                        update["senior_citizens"]
-                    ),
+                    "Senior Citizens": update["senior_citizens"],
                     "PWD": update["pwd"],
-                    "Pregnant Women": (
-                        update["pregnant_women"]
-                    ),
-                    "Medical Cases": (
-                        update["medical_cases"]
-                    ),
+                    "Pregnant Women": update["pregnant_women"],
+                    "Medical Cases": update["medical_cases"],
                     "Food": update["food_status"],
                     "Water": update["water_status"],
-                    "Electricity": (
-                        update["electricity_status"]
-                    ),
-                    "Validation": (
-                        update["validation_status"]
-                    ),
+                    "Electricity": update["electricity_status"],
+                    "Validation": update["validation_status"],
                     "Source": update["source"],
                     "Recorded At": update["recorded_at"],
                 }
                 for update in recent_updates
             ]
-        )
 
-        st.dataframe(
-            recent_table,
-            width="stretch",
-            hide_index=True,
-        )
+            st.dataframe(
+                pd.DataFrame(full_rows),
+                width="stretch",
+                hide_index=True,
+            )
