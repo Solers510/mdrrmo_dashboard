@@ -24,12 +24,28 @@ from services.validation_service import (
     review_evacuation_update,
 )
 from utils.auth import require_permission
+from utils.ui import (
+    render_attention_required,
+    render_dashboard_section_header,
+    render_kpi_grid,
+    render_operational_event_strip,
+    render_operational_page_header,
+)
 
 
 current_user = require_permission(
     PERMISSION_VALIDATE_BARANGAY_REPORTS
 )
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
+
+RECONCILIATION_ACTION_STATUSES = frozenset(
+    {
+        "Mismatch",
+        "Allocation Conflict",
+        "No Barangay Report",
+        "No EC Report",
+    }
+)
 
 
 def format_datetime(value: datetime | None) -> str:
@@ -38,6 +54,49 @@ def format_datetime(value: datetime | None) -> str:
     return value.astimezone(MANILA_TIMEZONE).strftime(
         "%d %B %Y, %I:%M %p"
     )
+
+
+def format_report_age(value: datetime | None) -> str:
+    if value is None:
+        return "No report"
+
+    localized = value.astimezone(MANILA_TIMEZONE)
+    now = datetime.now(MANILA_TIMEZONE)
+    seconds = max(int((now - localized).total_seconds()), 0)
+
+    if seconds < 60:
+        return "<1m"
+
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h"
+
+    return f"{hours // 24}d"
+
+
+def display_event_name(event: dict[str, object]) -> str:
+    classification = event.get("classification")
+    event_name = str(event["event_name"])
+
+    if classification is not None and str(classification).strip():
+        return f"{classification} {event_name}"
+
+    return event_name
+
+
+def display_sitrep(event: dict[str, object]) -> str:
+    value = event.get("current_sitrep_number")
+    return "Not set" if value in {None, ""} else str(value)
+
+
+def format_pair(left: object, right: object) -> str:
+    left_text = "—" if left is None else f"{int(left):,}"
+    right_text = "—" if right is None else f"{int(right):,}"
+    return f"{left_text} / {right_text}"
 
 
 def handle_review_error(error: Exception) -> None:
@@ -61,10 +120,12 @@ def find_reconciliation(
     )
 
 
-st.title("Operational Report Validation")
-st.caption(
-    "Validate barangay and evacuation-center reports and reconcile "
-    "differences before treating the data as official."
+render_operational_page_header(
+    title="Report Validation",
+    subtitle=(
+        "Review submitted barangay and evacuation-center reports, compare "
+        "source timing and reconciliation signals, and record a formal decision."
+    ),
 )
 
 success_message = st.session_state.pop(
@@ -89,18 +150,17 @@ if active_event is None:
     st.warning("No active disaster event exists.")
     st.stop()
 
-event_columns = st.columns(3)
-event_columns[0].metric(
-    "Active Event",
-    str(active_event["event_name"]),
-)
-event_columns[1].metric(
-    "Alert Level",
-    str(active_event["alert_code"]),
-)
-event_columns[2].metric(
-    "EOC Status",
-    str(active_event["eoc_status"]),
+render_operational_event_strip(
+    event_name=display_event_name(active_event),
+    hazard_type=str(active_event["hazard_type"]),
+    alert_code=str(active_event["alert_code"]),
+    eoc_status=str(active_event["eoc_status"]),
+    sitrep=display_sitrep(active_event),
+    official_reference=(
+        str(active_event["official_reference"])
+        if active_event.get("official_reference")
+        else None
+    ),
 )
 
 try:
@@ -116,74 +176,152 @@ except Exception:
     )
     st.stop()
 
-st.divider()
+population_exceptions = sum(
+    1
+    for row in reconciliation_rows
+    if row["reconciliation_status"]
+    in {"Mismatch", "Allocation Conflict"}
+)
+missing_source_reports = sum(
+    1
+    for row in reconciliation_rows
+    if row["reconciliation_status"]
+    in {"No Barangay Report", "No EC Report"}
+)
+reconciliation_action_count = sum(
+    1
+    for row in reconciliation_rows
+    if row["reconciliation_status"]
+    in RECONCILIATION_ACTION_STATUSES
+)
+allocation_conflicts = sum(
+    1
+    for row in reconciliation_rows
+    if row["reconciliation_status"] == "Allocation Conflict"
+)
 
-summary = st.columns(4)
-summary[0].metric(
-    "Barangay Reports Pending",
-    len(barangay_queue),
-)
-summary[1].metric(
-    "EC Reports Pending",
-    len(evacuation_queue),
-)
-summary[2].metric(
-    "Population Mismatches",
-    sum(
-        1
-        for row in reconciliation_rows
-        if row["reconciliation_status"]
-        in {"Mismatch", "Allocation Conflict"}
+render_dashboard_section_header(
+    title="Validation Workload",
+    subtitle=(
+        "Current submitted reports and reconciliation exceptions requiring "
+        "validator attention."
     ),
 )
-summary[3].metric(
-    "Missing Source Reports",
-    sum(
-        1
-        for row in reconciliation_rows
-        if row["reconciliation_status"]
-        in {"No Barangay Report", "No EC Report"}
-    ),
-)
+
+attention_items = []
+
+if barangay_queue:
+    attention_items.append(
+        {
+            "label": "Barangay Reviews",
+            "value": len(barangay_queue),
+            "tone": "info",
+        }
+    )
+
+if evacuation_queue:
+    attention_items.append(
+        {
+            "label": "EC Reviews",
+            "value": len(evacuation_queue),
+            "tone": "info",
+        }
+    )
+
+if population_exceptions:
+    attention_items.append(
+        {
+            "label": "Population Exceptions",
+            "value": population_exceptions,
+            "tone": "danger" if allocation_conflicts else "warning",
+        }
+    )
+
+if missing_source_reports:
+    attention_items.append(
+        {
+            "label": "Missing Source Reports",
+            "value": missing_source_reports,
+            "tone": "warning",
+        }
+    )
+
+render_attention_required(attention_items)
 
 barangay_tab, ec_tab, reconciliation_tab = st.tabs(
     (
-        "Barangay Reports",
-        "Evacuation-Center Reports",
-        "Population Reconciliation",
+        f"Barangay Queue ({len(barangay_queue)})",
+        f"EC Queue ({len(evacuation_queue)})",
+        f"Reconciliation ({reconciliation_action_count})",
     )
 )
 
 with barangay_tab:
-    st.subheader("Barangay Reports Awaiting Review")
+    render_dashboard_section_header(
+        title="Barangay Validation Queue",
+        subtitle=(
+            "Review submitted barangay reports in queue order. Select one report "
+            "to inspect source, timing, operating conditions, and reconciliation."
+        ),
+    )
 
     if not barangay_queue:
         st.success(
             "No barangay reports are waiting for validation."
         )
     else:
+        barangay_queue_rows = [
+            {
+                "Report": int(row["id"]),
+                "Barangay": row["barangay_name"],
+                "Situation": row["situation_status"],
+                "Affected F / I": (
+                    f"{int(row['affected_families']):,} / "
+                    f"{int(row['affected_individuals']):,}"
+                ),
+                "Displaced": (
+                    int(row["inside_ec_individuals"])
+                    + int(row["outside_ec_individuals"])
+                ),
+                "Age": format_report_age(row["recorded_at"]),
+            }
+            for row in barangay_queue
+        ]
+
         st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "ID": row["id"],
-                        "Barangay": row["barangay_name"],
-                        "Situation": row["situation_status"],
-                        "Affected Families": row["affected_families"],
-                        "Affected Individuals": row["affected_individuals"],
-                        "Inside EC Families": row["inside_ec_families"],
-                        "Inside EC Individuals": row["inside_ec_individuals"],
-                        "Outside EC Families": row["outside_ec_families"],
-                        "Outside EC Individuals": row["outside_ec_individuals"],
-                        "Status": row["validation_status"],
-                        "Source": row["source"],
-                        "Recorded At": row["recorded_at"],
-                    }
-                    for row in barangay_queue
-                ]
-            ),
+            pd.DataFrame(barangay_queue_rows),
             width="stretch",
             hide_index=True,
+            column_config={
+                "Report": st.column_config.NumberColumn(
+                    "#",
+                    width=55,
+                    format="%d",
+                ),
+                "Barangay": st.column_config.TextColumn(
+                    "Barangay",
+                    width=165,
+                    pinned=True,
+                ),
+                "Situation": st.column_config.TextColumn(
+                    "Situation",
+                    width=100,
+                ),
+                "Affected F / I": st.column_config.TextColumn(
+                    "Affected F / I",
+                    help="Affected families / affected individuals",
+                    width=110,
+                ),
+                "Displaced": st.column_config.NumberColumn(
+                    "Displaced",
+                    width=85,
+                    format="%d",
+                ),
+                "Age": st.column_config.TextColumn(
+                    "Age",
+                    width=55,
+                ),
+            },
         )
 
         row_by_id = {
@@ -202,27 +340,33 @@ with barangay_tab:
         )
         selected = row_by_id[selected_id]
 
-        st.markdown(
-            f"### Report #{selected_id}: "
-            f"{selected['barangay_name']}"
+        render_dashboard_section_header(
+            title=f"Review Report #{selected_id} — {selected['barangay_name']}",
+            subtitle=(
+                f"Recorded {format_datetime(selected['recorded_at'])}. "
+                "Review the operational figures and source context before deciding."
+            ),
         )
 
-        pop = st.columns(4)
-        pop[0].metric(
-            "Affected Families",
-            int(selected["affected_families"]),
-        )
-        pop[1].metric(
-            "Affected Individuals",
-            int(selected["affected_individuals"]),
-        )
-        pop[2].metric(
-            "Inside EC Individuals",
-            int(selected["inside_ec_individuals"]),
-        )
-        pop[3].metric(
-            "Outside EC Individuals",
-            int(selected["outside_ec_individuals"]),
+        render_kpi_grid(
+            [
+                {
+                    "label": "Affected Families",
+                    "value": f"{int(selected['affected_families']):,}",
+                },
+                {
+                    "label": "Affected Individuals",
+                    "value": f"{int(selected['affected_individuals']):,}",
+                },
+                {
+                    "label": "Inside EC Individuals",
+                    "value": f"{int(selected['inside_ec_individuals']):,}",
+                },
+                {
+                    "label": "Outside EC Individuals",
+                    "value": f"{int(selected['outside_ec_individuals']):,}",
+                },
+            ],
         )
 
         reconciliation = find_reconciliation(
@@ -350,8 +494,12 @@ with barangay_tab:
                     st.rerun()
 
 with ec_tab:
-    st.subheader(
-        "Evacuation-Center Reports Awaiting Review"
+    render_dashboard_section_header(
+        title="Evacuation-Center Validation Queue",
+        subtitle=(
+            "Review submitted center reports with occupancy, service condition, "
+            "source timing, vulnerable groups, and reconciliation context."
+        ),
     )
 
     if not evacuation_queue:
@@ -359,28 +507,58 @@ with ec_tab:
             "No evacuation-center reports are waiting for validation."
         )
     else:
+        ec_queue_rows = [
+            {
+                "Report": int(row["id"]),
+                "Center": row["center_name"],
+                "Status": row["status"],
+                "Occupancy F / I": (
+                    f"{int(row['families']):,} / "
+                    f"{int(row['individuals']):,}"
+                ),
+                "Food · Water · Power": (
+                    f"{row['food_status']} · "
+                    f"{row['water_status']} · "
+                    f"{row['electricity_status']}"
+                ),
+                "Age": format_report_age(row["recorded_at"]),
+            }
+            for row in evacuation_queue
+        ]
+
         st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "ID": row["id"],
-                        "Center": row["center_name"],
-                        "Barangay": row["barangay_name"],
-                        "Center Status": row["status"],
-                        "Families": row["families"],
-                        "Individuals": row["individuals"],
-                        "Food": row["food_status"],
-                        "Water": row["water_status"],
-                        "Electricity": row["electricity_status"],
-                        "Validation": row["validation_status"],
-                        "Source": row["source"],
-                        "Recorded At": row["recorded_at"],
-                    }
-                    for row in evacuation_queue
-                ]
-            ),
+            pd.DataFrame(ec_queue_rows),
             width="stretch",
             hide_index=True,
+            column_config={
+                "Report": st.column_config.NumberColumn(
+                    "#",
+                    width=55,
+                    format="%d",
+                ),
+                "Center": st.column_config.TextColumn(
+                    "Center",
+                    width=225,
+                    pinned=True,
+                ),
+                "Status": st.column_config.TextColumn(
+                    "Status",
+                    width=75,
+                ),
+                "Occupancy F / I": st.column_config.TextColumn(
+                    "Occupancy F / I",
+                    help="Registered families / registered individuals",
+                    width=110,
+                ),
+                "Food · Water · Power": st.column_config.TextColumn(
+                    "Food · Water · Power",
+                    width=215,
+                ),
+                "Age": st.column_config.TextColumn(
+                    "Age",
+                    width=55,
+                ),
+            },
         )
 
         ec_by_id = {
@@ -399,27 +577,33 @@ with ec_tab:
         )
         selected_ec = ec_by_id[selected_ec_id]
 
-        st.markdown(
-            f"### Report #{selected_ec_id}: "
-            f"{selected_ec['center_name']}"
+        render_dashboard_section_header(
+            title=f"Review Report #{selected_ec_id} — {selected_ec['center_name']}",
+            subtitle=(
+                f"Host barangay: {selected_ec['barangay_name']} · "
+                f"Recorded {format_datetime(selected_ec['recorded_at'])}."
+            ),
         )
 
-        metrics = st.columns(4)
-        metrics[0].metric(
-            "Families",
-            int(selected_ec["families"]),
-        )
-        metrics[1].metric(
-            "Individuals",
-            int(selected_ec["individuals"]),
-        )
-        metrics[2].metric(
-            "Safe Capacity",
-            int(selected_ec["safe_capacity"]),
-        )
-        metrics[3].metric(
-            "Center Status",
-            str(selected_ec["status"]),
+        render_kpi_grid(
+            [
+                {
+                    "label": "Families",
+                    "value": f"{int(selected_ec['families']):,}",
+                },
+                {
+                    "label": "Individuals",
+                    "value": f"{int(selected_ec['individuals']):,}",
+                },
+                {
+                    "label": "Safe Capacity",
+                    "value": f"{int(selected_ec['safe_capacity']):,}",
+                },
+                {
+                    "label": "Center Status",
+                    "value": str(selected_ec["status"]),
+                },
+            ],
         )
 
         vulnerable = st.columns(5)
@@ -564,76 +748,172 @@ with ec_tab:
                     st.rerun()
 
 with reconciliation_tab:
-    st.subheader(
-        "Barangay / Evacuation-Center Reconciliation"
-    )
-    st.caption(
-        "A mismatch does not automatically mean one report is wrong. "
-        "Compare timestamps and source documents because reports may "
-        "arrive at different times."
+    render_dashboard_section_header(
+        title="Source Reconciliation",
+        subtitle=(
+            "Compare barangay Inside-EC figures with evacuation-center records. "
+            "Differences are review signals, not automatic proof that a source is wrong."
+        ),
     )
 
     if not reconciliation_rows:
-        st.info(
-            "No reconciliation data is available."
-        )
+        st.info("No reconciliation data is available.")
     else:
-        table = pd.DataFrame(
-            [
-                {
-                    "Barangay": row["barangay_name"],
-                    "Barangay Inside EC — Families": (
-                        row["barangay_inside_families"]
-                    ),
-                    "EC Records — Families": (
-                        row["ec_inside_families"]
-                    ),
-                    "Family Difference": (
-                        row["family_difference"]
-                    ),
-                    "Barangay Inside EC — Individuals": (
-                        row["barangay_inside_individuals"]
-                    ),
-                    "EC Records — Individuals": (
-                        row["ec_inside_individuals"]
-                    ),
-                    "Individual Difference": (
-                        row["individual_difference"]
-                    ),
-                    "Operational ECs": (
-                        row["ec_operational_centers"]
-                    ),
-                    "Status": (
-                        row["reconciliation_status"]
-                    ),
-                    "Barangay Report Time": (
-                        row["barangay_recorded_at"]
-                    ),
-                    "Latest EC Report Time": (
-                        row["latest_ec_recorded_at"]
-                    ),
-                }
-                for row in reconciliation_rows
-            ]
+        matches = sum(
+            1
+            for row in reconciliation_rows
+            if row["reconciliation_status"] == "Match"
         )
-        st.dataframe(
-            table,
-            width="stretch",
-            hide_index=True,
+        mismatches = sum(
+            1
+            for row in reconciliation_rows
+            if row["reconciliation_status"] == "Mismatch"
+        )
+        missing_sources = sum(
+            1
+            for row in reconciliation_rows
+            if row["reconciliation_status"]
+            in {"No Barangay Report", "No EC Report"}
+        )
+        allocation_conflicts = sum(
+            1
+            for row in reconciliation_rows
+            if row["reconciliation_status"] == "Allocation Conflict"
         )
 
-        mismatches = [
+        render_kpi_grid(
+            [
+                {"label": "Matches", "value": matches},
+                {"label": "Mismatches", "value": mismatches},
+                {"label": "Missing Source", "value": missing_sources},
+                {
+                    "label": "Allocation Conflicts",
+                    "value": allocation_conflicts,
+                },
+            ],
+        )
+
+        problem_rows = [
             row
             for row in reconciliation_rows
             if row["reconciliation_status"]
-            in {"Mismatch", "Allocation Conflict"}
+            in RECONCILIATION_ACTION_STATUSES
         ]
-        if mismatches:
+        no_current_data_count = sum(
+            1
+            for row in reconciliation_rows
+            if row["reconciliation_status"] == "No Current Data"
+        )
+
+        if problem_rows:
             st.warning(
-                f"{len(mismatches)} barangay(s) require "
-                "population reconciliation."
+                f"{len(problem_rows)} barangay(s) currently require source "
+                "or population reconciliation."
+            )
+
+            routine_rows = [
+                {
+                    "Barangay": row["barangay_name"],
+                    "Status": row["reconciliation_status"],
+                    "Families B / EC": format_pair(
+                        row["barangay_inside_families"],
+                        row["ec_inside_families"],
+                    ),
+                    "Individuals B / EC": format_pair(
+                        row["barangay_inside_individuals"],
+                        row["ec_inside_individuals"],
+                    ),
+                    "Barangay Age": format_report_age(
+                        row["barangay_recorded_at"]
+                    ),
+                    "EC Source Age": format_report_age(
+                        row["latest_ec_recorded_at"]
+                    ),
+                }
+                for row in problem_rows
+            ]
+
+            st.dataframe(
+                pd.DataFrame(routine_rows),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Barangay": st.column_config.TextColumn(
+                        "Barangay",
+                        width=165,
+                        pinned=True,
+                    ),
+                    "Status": st.column_config.TextColumn(
+                        "Status",
+                        width=150,
+                    ),
+                    "Families B / EC": st.column_config.TextColumn(
+                        "Families B / EC",
+                        help="Barangay Inside-EC families / EC-record families",
+                        width=120,
+                    ),
+                    "Individuals B / EC": st.column_config.TextColumn(
+                        "Individuals B / EC",
+                        help=(
+                            "Barangay Inside-EC individuals / "
+                            "EC-record individuals"
+                        ),
+                        width=130,
+                    ),
+                    "Barangay Age": st.column_config.TextColumn(
+                        "Barangay Age",
+                        width=95,
+                    ),
+                    "EC Source Age": st.column_config.TextColumn(
+                        "EC Source Age",
+                        width=95,
+                    ),
+                },
             )
         else:
             st.success(
-                "No current barangay/EC population mismatches were detected."
+                "No current barangay/EC source or population reconciliation "
+                "issue requires validator action."
             )
+
+        if no_current_data_count:
+            st.caption(
+                f"{no_current_data_count} barangay(s) have no current report "
+                "from either comparison source. They are excluded from the "
+                "action queue and remain available in the full source view below."
+            )
+
+        with st.expander(
+            "Full reconciliation source timestamps",
+            expanded=False,
+        ):
+            full_rows = [
+                {
+                    "Barangay": row["barangay_name"],
+                    "Barangay Inside EC — Families": row["barangay_inside_families"],
+                    "EC Records — Families": row["ec_inside_families"],
+                    "Family Difference": row["family_difference"],
+                    "Barangay Inside EC — Individuals": (
+                        row["barangay_inside_individuals"]
+                    ),
+                    "EC Records — Individuals": row["ec_inside_individuals"],
+                    "Individual Difference": row["individual_difference"],
+                    "Operational ECs": row["ec_operational_centers"],
+                    "Status": row["reconciliation_status"],
+                    "Barangay Report Time": row["barangay_recorded_at"],
+                    "Latest EC Report Time": row["latest_ec_recorded_at"],
+                }
+                for row in reconciliation_rows
+            ]
+
+            st.dataframe(
+                pd.DataFrame(full_rows),
+                width="stretch",
+                hide_index=True,
+            )
+
+        st.caption(
+            "Before validating or correcting figures, compare source documents "
+            "and timestamps. Reconciliation remains a warning workflow and does "
+            "not rewrite operational reports."
+        )
