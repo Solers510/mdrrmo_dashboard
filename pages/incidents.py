@@ -1,4 +1,6 @@
+from datetime import datetime
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -49,11 +51,89 @@ from services.resource_service import (
     set_resource_status,
 )
 from utils.auth import require_permission
+from utils.ui import (
+    render_attention_required,
+    render_dashboard_section_header,
+    render_kpi_grid,
+    render_operational_event_strip,
+    render_operational_page_header,
+    render_workflow_section,
+)
 
 
 current_user = require_permission(
     PERMISSION_MANAGE_INCIDENTS
 )
+
+
+MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
+
+INCIDENT_PRIORITY_RANK = {
+    "Low": 0,
+    "Moderate": 1,
+    "High": 2,
+    "Critical": 3,
+}
+
+
+def display_event_name(event: dict[str, object]) -> str:
+    classification = event.get("classification")
+    name = str(event["event_name"])
+
+    if classification is not None and str(classification).strip():
+        return f"{classification} {name}"
+
+    return name
+
+
+def display_sitrep(event: dict[str, object]) -> str:
+    value = event.get("current_sitrep_number")
+    return "Not set" if value in {None, ""} else str(value)
+
+
+def format_datetime(value: datetime | None) -> str:
+    if value is None:
+        return "Not available"
+
+    return value.astimezone(MANILA_TIMEZONE).strftime(
+        "%d %B %Y, %I:%M %p"
+    )
+
+
+def format_age(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+
+    localized = value.astimezone(MANILA_TIMEZONE)
+    now = datetime.now(MANILA_TIMEZONE)
+    seconds = max(int((now - localized).total_seconds()), 0)
+
+    if seconds < 60:
+        return "<1m"
+
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h"
+
+    return f"{hours // 24}d"
+
+
+def incident_sort_key(incident: dict[str, object]) -> tuple[int, float]:
+    priority_rank = INCIDENT_PRIORITY_RANK.get(
+        str(incident["priority"]),
+        -1,
+    )
+    reported_at = incident.get("reported_at")
+    timestamp = (
+        reported_at.timestamp()
+        if isinstance(reported_at, datetime)
+        else 0.0
+    )
+    return priority_rank, timestamp
 
 
 def show_error(error: Exception) -> None:
@@ -63,10 +143,12 @@ def show_error(error: Exception) -> None:
         st.error(str(error))
 
 
-st.title("Incident & Response Operations")
-st.caption(
-    "Record incidents, track operational status, dispatch response "
-    "resources, and preserve a complete incident history."
+render_operational_page_header(
+    title="Incident & Response Operations",
+    subtitle=(
+        "Record and prioritize incidents, coordinate response resources, "
+        "manage incident lifecycle, and preserve an auditable operational history."
+    ),
 )
 
 success_message = st.session_state.pop(
@@ -94,18 +176,17 @@ if active_event is None:
     )
     st.stop()
 
-event_columns = st.columns(3)
-event_columns[0].metric(
-    "Active Event",
-    str(active_event["event_name"]),
-)
-event_columns[1].metric(
-    "Alert Level",
-    str(active_event["alert_code"]),
-)
-event_columns[2].metric(
-    "EOC Status",
-    str(active_event["eoc_status"]),
+render_operational_event_strip(
+    event_name=display_event_name(active_event),
+    hazard_type=str(active_event["hazard_type"]),
+    alert_code=str(active_event["alert_code"]),
+    eoc_status=str(active_event["eoc_status"]),
+    sitrep=display_sitrep(active_event),
+    official_reference=(
+        str(active_event["official_reference"])
+        if active_event.get("official_reference")
+        else None
+    ),
 )
 
 try:
@@ -130,50 +211,136 @@ open_incidents = [
     for incident in incidents
     if incident["status"] not in {"Resolved", "Cancelled"}
 ]
+closed_incidents = [
+    incident
+    for incident in incidents
+    if incident["status"] in {"Resolved", "Cancelled"}
+]
+operational_incidents = sorted(
+    open_incidents,
+    key=incident_sort_key,
+    reverse=True,
+)
+registered_resource_count = len(resources)
+active_resources = [
+    resource
+    for resource in resources
+    if resource["is_active"]
+]
+available_resource_count = sum(
+    1
+    for resource in active_resources
+    if resource["status"] == "Available"
+)
+assigned_resource_count = sum(
+    1
+    for resource in active_resources
+    if resource["status"] == "Assigned"
+)
+critical_incident_count = sum(
+    1
+    for incident in open_incidents
+    if incident["priority"] == "Critical"
+)
+high_incident_count = sum(
+    1
+    for incident in open_incidents
+    if incident["priority"] == "High"
+)
 
-summary_columns = st.columns(4)
-summary_columns[0].metric(
-    "Open Incidents",
-    len(open_incidents),
-)
-summary_columns[1].metric(
-    "Critical",
-    sum(
-        1
-        for incident in open_incidents
-        if incident["priority"] == "Critical"
+render_dashboard_section_header(
+    title="Incident Command Picture",
+    subtitle=(
+        "Current incident workload and response-resource readiness for the "
+        "active disaster event."
     ),
 )
-summary_columns[2].metric(
-    "Resources Available",
-    sum(
-        1
-        for resource in resources
-        if resource["status"] == "Available"
-        and resource["is_active"]
-    ),
+
+render_kpi_grid(
+    [
+        {
+            "label": "Open Incidents",
+            "value": len(open_incidents),
+        },
+        {
+            "label": "Critical",
+            "value": critical_incident_count,
+        },
+        {
+            "label": "High Priority",
+            "value": high_incident_count,
+        },
+        {
+            "label": "Resources Available",
+            "value": available_resource_count,
+            "meta": (
+                "No resources registered"
+                if registered_resource_count == 0
+                else f"{len(active_resources)} active registered"
+            ),
+        },
+        {
+            "label": "Resources Assigned",
+            "value": assigned_resource_count,
+        },
+    ]
 )
-summary_columns[3].metric(
-    "Resources Assigned",
-    sum(
-        1
-        for resource in resources
-        if resource["status"] == "Assigned"
-        and resource["is_active"]
-    ),
-)
+
+attention_items = []
+if critical_incident_count:
+    attention_items.append(
+        {
+            "label": "Critical Incidents",
+            "value": critical_incident_count,
+            "tone": "danger",
+        }
+    )
+if high_incident_count:
+    attention_items.append(
+        {
+            "label": "High-Priority Incidents",
+            "value": high_incident_count,
+            "tone": "warning",
+        }
+    )
+if open_incidents:
+    if registered_resource_count == 0:
+        attention_items.append(
+            {
+                "label": "Response Resource Registry",
+                "value": "Not Set Up",
+                "tone": "warning",
+            }
+        )
+    elif available_resource_count == 0:
+        attention_items.append(
+            {
+                "label": "Available Resources",
+                "value": 0,
+                "tone": "danger",
+            }
+        )
+
+if attention_items:
+    render_attention_required(attention_items)
 
 incident_tab, new_tab, resource_tab, history_tab = st.tabs(
     (
-        "Incident Operations",
+        f"Incident Operations ({len(open_incidents)})",
         "New Incident",
-        "Response Resources",
+        f"Response Resources ({len(resources)})",
         "Incident History",
     )
 )
 
 with new_tab:
-    st.subheader("Record New Incident")
+    render_dashboard_section_header(
+        title="Record New Incident",
+        subtitle=(
+            "Capture the incident location, operational priority, affected "
+            "population, description, and information source."
+        ),
+    )
 
     if not barangays:
         st.warning(
@@ -199,6 +366,15 @@ with new_tab:
             f"incident_form_{nonce}",
             clear_on_submit=False,
         ):
+            render_workflow_section(
+                step=1,
+                title="Location & Classification",
+                subtitle=(
+                    "Identify where the incident occurred and classify the "
+                    "operational problem before entering impact details."
+                ),
+            )
+
             selected_barangay = st.selectbox(
                 "Barangay *",
                 options=list(barangay_label_to_id),
@@ -210,19 +386,29 @@ with new_tab:
                 key=prefix + "location",
             )
 
-            row = st.columns(3)
-            incident_type = row[0].selectbox(
+            classification_columns = st.columns(2)
+            incident_type = classification_columns[0].selectbox(
                 "Incident type *",
                 options=INCIDENT_TYPES,
                 key=prefix + "type",
             )
-            priority = row[1].selectbox(
+            priority = classification_columns[1].selectbox(
                 "Priority *",
                 options=INCIDENT_PRIORITIES,
                 index=1,
                 key=prefix + "priority",
             )
-            persons_affected = row[2].number_input(
+
+            render_workflow_section(
+                step=2,
+                title="Impact & Source",
+                subtitle=(
+                    "Describe the incident, estimate the people directly "
+                    "affected, and identify the reporting source."
+                ),
+            )
+
+            persons_affected = st.number_input(
                 "Persons affected",
                 min_value=0,
                 step=1,
@@ -242,6 +428,15 @@ with new_tab:
                     "radio message, official report"
                 ),
                 key=prefix + "source",
+            )
+
+            render_workflow_section(
+                step=3,
+                title="Review & Submit",
+                subtitle=(
+                    "Confirm the report before creating the incident. New "
+                    "incidents begin as Reported and later status changes remain auditable."
+                ),
             )
 
             st.info(
@@ -317,91 +512,173 @@ with new_tab:
                     st.rerun()
 
 with incident_tab:
-    st.subheader("Active Incident Operations")
+    render_dashboard_section_header(
+        title="Active Incident Operations",
+        subtitle=(
+            "Open incidents are ordered by operational priority and recency. "
+            "Select an incident to coordinate resources or change lifecycle state."
+        ),
+    )
 
     if not incidents:
         st.info(
             "No incidents have been recorded for the active event."
         )
     else:
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Control": incident["control_number"],
-                        "Barangay": incident["barangay_name"],
-                        "Type": incident["incident_type"],
-                        "Priority": incident["priority"],
-                        "Status": incident["status"],
-                        "Persons Affected": incident["persons_affected"],
-                        "Location": incident["exact_location"],
-                        "Reported At": incident["reported_at"],
-                    }
-                    for incident in incidents
-                ]
-            ),
-            width="stretch",
-            hide_index=True,
-        )
+        if not operational_incidents:
+            st.success(
+                "No active incident currently requires operational handling."
+            )
+        else:
+            incident_queue_rows = [
+                {
+                    "Control": incident["control_number"],
+                    "Priority": incident["priority"],
+                    "Status": incident["status"],
+                    "Barangay": incident["barangay_name"],
+                    "Incident / Location": (
+                        f"{incident['incident_type']} · "
+                        f"{incident['exact_location']}"
+                    ),
+                    "People": int(incident["persons_affected"]),
+                    "Age": format_age(incident["reported_at"]),
+                }
+                for incident in operational_incidents
+            ]
+
+            st.dataframe(
+                pd.DataFrame(incident_queue_rows),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Control": st.column_config.TextColumn(
+                        "Control",
+                        width=120,
+                        pinned=True,
+                    ),
+                    "Priority": st.column_config.TextColumn(
+                        "Priority",
+                        width=80,
+                    ),
+                    "Status": st.column_config.TextColumn(
+                        "Status",
+                        width=105,
+                    ),
+                    "Barangay": st.column_config.TextColumn(
+                        "Barangay",
+                        width=145,
+                    ),
+                    "Incident / Location": st.column_config.TextColumn(
+                        "Incident / Location",
+                        width=260,
+                    ),
+                    "People": st.column_config.NumberColumn(
+                        "People",
+                        width=65,
+                        format="%d",
+                    ),
+                    "Age": st.column_config.TextColumn(
+                        "Age",
+                        width=55,
+                    ),
+                },
+            )
+
+        if closed_incidents:
+            with st.expander(
+                f"Closed incidents ({len(closed_incidents)})",
+                expanded=False,
+            ):
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Control": incident["control_number"],
+                                "Priority": incident["priority"],
+                                "Status": incident["status"],
+                                "Barangay": incident["barangay_name"],
+                                "Type": incident["incident_type"],
+                                "Reported": format_datetime(
+                                    incident["reported_at"]
+                                ),
+                            }
+                            for incident in closed_incidents
+                        ]
+                    ),
+                    width="stretch",
+                    hide_index=True,
+                )
 
         incident_by_id = {
             int(incident["id"]): incident
             for incident in incidents
         }
 
+        incident_selection_ids = [
+            int(incident["id"])
+            for incident in operational_incidents
+        ] + [
+            int(incident["id"])
+            for incident in closed_incidents
+        ]
+
         selected_id = st.selectbox(
-            "Select incident",
-            options=list(incident_by_id),
+            "Select incident for operations or review",
+            options=incident_selection_ids,
             format_func=lambda incident_id: (
                 f"{incident_by_id[incident_id]['control_number']} — "
-                f"{incident_by_id[incident_id]['barangay_name']} — "
-                f"{incident_by_id[incident_id]['status']}"
+                f"{incident_by_id[incident_id]['priority']} — "
+                f"{incident_by_id[incident_id]['status']} — "
+                f"{incident_by_id[incident_id]['barangay_name']}"
             ),
             key="incident_operations_select",
         )
 
         selected = incident_by_id[selected_id]
 
-        st.markdown(
-            f"### {selected['control_number']}"
+        render_dashboard_section_header(
+            title=(
+                f"{selected['control_number']} — "
+                f"{selected['incident_type']}"
+            ),
+            subtitle=(
+                f"{selected['barangay_name']} · "
+                f"{selected['exact_location']} · "
+                f"reported {format_datetime(selected['reported_at'])}"
+            ),
         )
 
-        details = st.columns(4)
-        details[0].metric(
-            "Priority",
-            str(selected["priority"]),
-        )
-        details[1].metric(
-            "Status",
-            str(selected["status"]),
-        )
-        details[2].metric(
-            "Persons Affected",
-            int(selected["persons_affected"]),
-        )
-        details[3].metric(
-            "Barangay",
-            str(selected["barangay_name"]),
+        render_kpi_grid(
+            [
+                {
+                    "label": "Priority",
+                    "value": str(selected["priority"]),
+                },
+                {
+                    "label": "Status",
+                    "value": str(selected["status"]),
+                },
+                {
+                    "label": "Persons Affected",
+                    "value": f"{int(selected['persons_affected']):,}",
+                },
+                {
+                    "label": "Report Age",
+                    "value": format_age(selected["reported_at"]),
+                },
+            ]
         )
 
-        st.write(
-            "**Location:**",
-            selected["exact_location"],
-        )
-        st.write(
-            "**Type:**",
-            selected["incident_type"],
-        )
         st.write(
             "**Description:**",
             selected["description"],
         )
         st.write(
-            "**Source:**",
+            "**Information source:**",
             selected["source"],
         )
         st.write(
-            "**Latest action/notes:**",
+            "**Latest action / notes:**",
             selected["action_taken"]
             or "No action notes yet.",
         )
@@ -410,17 +687,60 @@ with incident_tab:
             incident_id=selected_id
         )
 
-        st.markdown("#### Assigned Response Resources")
+        render_dashboard_section_header(
+            title="Response Coordination",
+            subtitle=(
+                "Review active assignments, dispatch an available response "
+                "resource, or release a resource when its incident task is complete."
+            ),
+        )
 
-        if not assignments:
-            st.info(
-                "No active response resources are assigned."
-            )
-        else:
+        if assignments:
             st.dataframe(
-                pd.DataFrame(assignments),
+                pd.DataFrame(
+                    [
+                        {
+                            "Code": row["resource_code"],
+                            "Resource": row["resource_name"],
+                            "Type": row["resource_type"],
+                            "Subtype": row["subtype"] or "—",
+                            "Assigned": format_datetime(
+                                row["assigned_at"]
+                            ),
+                            "Notes": row["notes"] or "—",
+                        }
+                        for row in assignments
+                    ]
+                ),
                 width="stretch",
                 hide_index=True,
+                column_config={
+                    "Code": st.column_config.TextColumn(
+                        "Code",
+                        width=90,
+                        pinned=True,
+                    ),
+                    "Resource": st.column_config.TextColumn(
+                        "Resource",
+                        width=180,
+                    ),
+                    "Type": st.column_config.TextColumn(
+                        "Type",
+                        width=110,
+                    ),
+                    "Subtype": st.column_config.TextColumn(
+                        "Subtype",
+                        width=120,
+                    ),
+                    "Assigned": st.column_config.TextColumn(
+                        "Assigned",
+                        width=155,
+                    ),
+                    "Notes": st.column_config.TextColumn(
+                        "Notes",
+                        width=220,
+                    ),
+                },
             )
 
         available_resources = [
@@ -432,7 +752,33 @@ with incident_tab:
             )
         ]
 
-        if selected["status"] not in {"Resolved", "Cancelled"}:
+        if selected["status"] in {"Resolved", "Cancelled"}:
+            if not assignments:
+                st.info(
+                    "No active response resources are assigned."
+                )
+        elif registered_resource_count == 0:
+            st.info(
+                "No response resources are registered or assigned. Add a "
+                "resource in Response Resources before dispatching."
+            )
+        elif not active_resources:
+            st.warning(
+                "Response resources are registered, but none are active "
+                "or available for dispatch."
+            )
+        elif not available_resources and not assignments:
+            st.warning(
+                f"{len(active_resources)} active response resource(s) are "
+                "registered, but none are assigned or currently Available. "
+                "Review Readiness Status before dispatching."
+            )
+        else:
+            if not assignments:
+                st.info(
+                    "No active response resources are assigned to this incident."
+                )
+
             assign_columns = st.columns(2)
 
             with assign_columns[0]:
@@ -483,8 +829,11 @@ with incident_tab:
                             )
                             st.rerun()
                 else:
-                    st.info(
-                        "No resources are currently Available."
+                    st.warning(
+                        f"{len(active_resources)} active response "
+                        "resource(s) are registered, but none are "
+                        "currently Available. Review Readiness Status "
+                        "or release an assigned resource."
                     )
 
             with assign_columns[1]:
@@ -530,7 +879,13 @@ with incident_tab:
                             )
                             st.rerun()
 
-        st.divider()
+        render_dashboard_section_header(
+            title="Incident Lifecycle",
+            subtitle=(
+                "Record forward status changes and priority adjustments. "
+                "Each change is preserved in incident history."
+            ),
+        )
 
         transition_columns = st.columns(2)
 
@@ -614,9 +969,18 @@ with incident_tab:
                 key=f"priority_reason_{selected_id}",
             )
 
+            priority_change_pending = (
+                new_priority != str(selected["priority"])
+            )
+            if not priority_change_pending:
+                st.caption(
+                    "Select a different priority to apply a change."
+                )
+
             if st.button(
                 "Apply Priority Change",
                 key=f"priority_button_{selected_id}",
+                disabled=not priority_change_pending,
             ):
                 try:
                     change_incident_priority(
@@ -675,7 +1039,44 @@ with incident_tab:
                     st.rerun()
 
 with resource_tab:
-    st.subheader("Response Resource Readiness")
+    render_dashboard_section_header(
+        title="Response Resource Readiness",
+        subtitle=(
+            "Maintain the response-resource registry and current readiness "
+            "state used for incident dispatch."
+        ),
+    )
+
+    render_kpi_grid(
+        [
+            {
+                "label": "Resources Registered",
+                "value": registered_resource_count,
+                "meta": (
+                    f"{len(active_resources)} active"
+                    if registered_resource_count
+                    else "Registry not set up"
+                ),
+            },
+            {
+                "label": "Available",
+                "value": available_resource_count,
+            },
+            {
+                "label": "Assigned",
+                "value": assigned_resource_count,
+            },
+            {
+                "label": "Unavailable",
+                "value": sum(
+                    1
+                    for resource in active_resources
+                    if resource["status"]
+                    in {"Maintenance", "Out of Service"}
+                ),
+            },
+        ]
+    )
 
     create_tab, readiness_tab = st.tabs(
         (
@@ -685,6 +1086,14 @@ with resource_tab:
     )
 
     with create_tab:
+        render_dashboard_section_header(
+            title="Add Response Resource",
+            subtitle=(
+                "Create an official response-team, vehicle, or equipment record "
+                "for operational dispatch."
+            ),
+        )
+
         with st.form(
             "create_response_resource_form",
             clear_on_submit=False,
@@ -748,27 +1157,69 @@ with resource_tab:
                     st.rerun()
 
     with readiness_tab:
-        if not resources:
+        if registered_resource_count == 0:
             st.info(
-                "No response resources have been registered."
+                "No response resources have been registered. Use Add "
+                "Resource to create the first dispatchable record."
+            )
+        elif not active_resources:
+            st.warning(
+                "Response resources are registered, but none are active. "
+                "Inactive records are retained for history and cannot be "
+                "dispatched or updated here."
             )
         else:
+            render_dashboard_section_header(
+                title="Resource Status Board",
+                subtitle=(
+                    "Scan current readiness before assigning assets to incidents."
+                ),
+            )
+
             st.dataframe(
                 pd.DataFrame(
                     [
                         {
                             "Code": resource["resource_code"],
-                            "Name": resource["name"],
+                            "Resource": resource["name"],
                             "Type": resource["resource_type"],
-                            "Subtype": resource["subtype"],
+                            "Subtype": resource["subtype"] or "—",
                             "Status": resource["status"],
-                            "Details": resource["details"],
+                            "Details": resource["details"] or "—",
                         }
                         for resource in resources
+                        if resource["is_active"]
                     ]
                 ),
                 width="stretch",
                 hide_index=True,
+                column_config={
+                    "Code": st.column_config.TextColumn(
+                        "Code",
+                        width=90,
+                        pinned=True,
+                    ),
+                    "Resource": st.column_config.TextColumn(
+                        "Resource",
+                        width=180,
+                    ),
+                    "Type": st.column_config.TextColumn(
+                        "Type",
+                        width=110,
+                    ),
+                    "Subtype": st.column_config.TextColumn(
+                        "Subtype",
+                        width=120,
+                    ),
+                    "Status": st.column_config.TextColumn(
+                        "Status",
+                        width=110,
+                    ),
+                    "Details": st.column_config.TextColumn(
+                        "Details",
+                        width=260,
+                    ),
+                },
             )
 
             resource_by_id = {
@@ -836,7 +1287,13 @@ with resource_tab:
                         st.rerun()
 
 with history_tab:
-    st.subheader("Incident Audit History")
+    render_dashboard_section_header(
+        title="Incident Audit History",
+        subtitle=(
+            "Inspect the immutable operational timeline for status, priority, "
+            "resource, and administrative changes."
+        ),
+    )
 
     if not incidents:
         st.info(
@@ -878,17 +1335,49 @@ with history_tab:
                 pd.DataFrame(
                     [
                         {
-                            "When": row["effective_at"],
+                            "When": format_datetime(
+                                row["effective_at"]
+                            ),
                             "Change": row["change_type"],
-                            "Field": row["field_name"],
-                            "Previous": row["previous_value"],
-                            "New": row["new_value"],
-                            "Notes": row["notes"],
-                            "Changed By": row["changed_by"],
+                            "Notes": row["notes"] or "—",
+                            "Field": row["field_name"] or "—",
+                            "Previous": row["previous_value"] or "—",
+                            "New": row["new_value"] or "—",
+                            "Changed By": row["changed_by"] or "—",
                         }
                         for row in history_rows
                     ]
                 ),
                 width="stretch",
                 hide_index=True,
+                column_config={
+                    "When": st.column_config.TextColumn(
+                        "When",
+                        width=155,
+                    ),
+                    "Change": st.column_config.TextColumn(
+                        "Change",
+                        width=115,
+                    ),
+                    "Notes": st.column_config.TextColumn(
+                        "Notes",
+                        width=420,
+                    ),
+                    "Field": st.column_config.TextColumn(
+                        "Field",
+                        width=80,
+                    ),
+                    "Previous": st.column_config.TextColumn(
+                        "Previous",
+                        width=95,
+                    ),
+                    "New": st.column_config.TextColumn(
+                        "New",
+                        width=95,
+                    ),
+                    "Changed By": st.column_config.TextColumn(
+                        "Changed By",
+                        width=150,
+                    ),
+                },
             )
