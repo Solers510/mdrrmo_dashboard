@@ -1,4 +1,6 @@
+from datetime import datetime
 import json
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -16,73 +18,332 @@ from services.system_health_service import (
 )
 from utils.auth import require_permission
 from utils.error_handling import log_exception
+from utils.ui import (
+    render_attention_required,
+    render_dashboard_section_header,
+    render_kpi_grid,
+    render_operational_page_header,
+    render_workflow_section,
+)
+
 
 current_user = require_permission(PERMISSION_MANAGE_USERS)
 
-st.title("System Health, Audit and Recovery")
-st.caption(
-    "Administrator-only reliability tools for the MDRRMO prototype."
+
+MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
+HEALTH_STATUS_ORDER = {
+    "FAIL": 0,
+    "WARN": 1,
+    "PASS": 2,
+}
+AUDIT_OPERATION_LABELS = {
+    "INSERT": "Created",
+    "UPDATE": "Updated",
+    "DELETE": "Deleted",
+}
+DATA_AREA_LABELS = {
+    "app_users": "Authorized Accounts",
+    "barangay_updates": "Barangay Updates",
+    "disaster_events": "Disaster Events",
+    "evacuation_center_updates": "Evacuation Center Updates",
+    "evacuation_centers": "Evacuation Centers",
+    "incident_history": "Incident History",
+    "incidents": "Incidents",
+    "report_snapshots": "Report Snapshots",
+    "response_resource_assignments": "Resource Assignments",
+    "response_resources": "Response Resources",
+}
+
+
+def format_datetime(value: object) -> str:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+
+    if not isinstance(value, datetime):
+        return "Not available"
+
+    localized = (
+        value.replace(tzinfo=MANILA_TIMEZONE)
+        if value.tzinfo is None
+        else value.astimezone(MANILA_TIMEZONE)
+    )
+    return localized.strftime("%d %B %Y, %I:%M %p")
+
+
+def format_size(value: object) -> str:
+    try:
+        size = max(0, int(value))
+    except (TypeError, ValueError):
+        return "Not available"
+
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def compact_hash(value: object) -> str:
+    digest = str(value or "").strip()
+    return f"{digest[:12]}…" if len(digest) > 12 else digest or "Not recorded"
+
+
+def format_short_datetime(value: object) -> tuple[str, str]:
+    formatted = format_datetime(value)
+    if formatted == "Not available" or ", " not in formatted:
+        return formatted, ""
+
+    date_text, time_text = formatted.rsplit(", ", maxsplit=1)
+    return date_text, time_text
+
+
+def archive_reference(value: object) -> str:
+    filename = str(value or "").strip()
+    return (
+        filename.removeprefix("mdrrmo_dashboard_")
+        .removesuffix(".backup")
+    ) or "Not recorded"
+
+
+def audit_operation_label(value: object) -> str:
+    operation = str(value or "").upper()
+    return AUDIT_OPERATION_LABELS.get(operation, operation.title() or "Unknown")
+
+
+def audit_data_area_label(value: object) -> str:
+    data_area = str(value or "").strip()
+    return DATA_AREA_LABELS.get(
+        data_area,
+        data_area.replace("_", " ").title() or "Unknown",
+    )
+
+
+render_operational_page_header(
+    title="System Reliability & Audit",
+    subtitle=(
+        "Monitor application readiness, inspect the immutable audit trail, "
+        "and maintain verified PostgreSQL recovery evidence."
+    ),
 )
 
+backup_success = st.session_state.pop(
+    "system_admin_backup_success",
+    None,
+)
+if backup_success:
+    st.success(backup_success)
+
+try:
+    health_rows = run_system_health_checks()
+except Exception as error:
+    reference = log_exception("System Health page", error)
+    st.error("System health checks could not be completed.")
+    st.caption(f"Error reference: {reference}")
+    health_rows = []
+
+try:
+    audit_rows = list_audit_entries(limit=500)
+except AuditServiceError as error:
+    st.error(str(error))
+    audit_rows = []
+except Exception as error:
+    reference = log_exception("Audit Log page", error)
+    st.error("The audit log could not be loaded.")
+    st.caption(f"Error reference: {reference}")
+    audit_rows = []
+
+try:
+    backup_rows = list_backups()
+except Exception as error:
+    reference = log_exception("Backup archive page", error)
+    st.error("The local backup archive could not be listed.")
+    st.caption(f"Error reference: {reference}")
+    backup_rows = []
+
+passed_count = sum(row["status"] == "PASS" for row in health_rows)
+warning_count = sum(row["status"] == "WARN" for row in health_rows)
+failed_count = sum(row["status"] == "FAIL" for row in health_rows)
+system_status = overall_health_status(health_rows) if health_rows else "UNKNOWN"
+verified_backup_count = sum(
+    row.get("archive_verified") is True for row in backup_rows
+)
+latest_backup = backup_rows[0] if backup_rows else None
+latest_backup_date, latest_backup_time = format_short_datetime(
+    latest_backup.get("created_at") if latest_backup else None
+)
+
+render_dashboard_section_header(
+    title="Reliability Command Picture",
+    subtitle=(
+        "Current technical readiness, audit visibility, and recoverability "
+        "evidence for this application instance."
+    ),
+)
+
+render_kpi_grid(
+    [
+        {
+            "label": "System Status",
+            "value": system_status,
+            "meta": f"{len(health_rows)} checks completed",
+        },
+        {
+            "label": "Failed Checks",
+            "value": failed_count,
+        },
+        {
+            "label": "Audit Entries Loaded",
+            "value": len(audit_rows),
+            "meta": "Latest 500 maximum",
+        },
+        {
+            "label": "Verified Backups",
+            "value": verified_backup_count,
+            "meta": f"{len(backup_rows)} local archives",
+        },
+        {
+            "label": "Latest Backup",
+            "value": latest_backup_date if latest_backup else "None",
+            "meta": latest_backup_time,
+        },
+    ]
+)
+
+attention_items = []
+if failed_count:
+    attention_items.append(
+        {
+            "label": "Failed Health Checks",
+            "value": failed_count,
+            "tone": "danger",
+        }
+    )
+if warning_count:
+    attention_items.append(
+        {
+            "label": "Health Warnings",
+            "value": warning_count,
+            "tone": "warning",
+        }
+    )
+if not backup_rows:
+    attention_items.append(
+        {
+            "label": "Recovery Evidence",
+            "value": "No Local Backup",
+            "tone": "warning",
+        }
+    )
+elif verified_backup_count < len(backup_rows):
+    attention_items.append(
+        {
+            "label": "Unverified Local Archives",
+            "value": len(backup_rows) - verified_backup_count,
+            "tone": "warning",
+        }
+    )
+
+attention_items.append(
+    {
+        "label": "Off-Machine Backup Retention",
+        "value": "Manual Verification",
+        "tone": "warning",
+    }
+)
+
+if attention_items:
+    render_attention_required(attention_items)
+else:
+    st.success("No current reliability exception was detected by the automated checks.")
+
 health_tab, audit_tab, backup_tab = st.tabs(
-    ("System Health", "Audit Log", "Backup & Restore")
+    (
+        f"Health Checks ({len(health_rows)})",
+        f"Audit Trail ({len(audit_rows)})",
+        f"Backup & Recovery ({len(backup_rows)})",
+    )
 )
 
 with health_tab:
-    st.subheader("System Health Checks")
-
-    try:
-        health_rows = run_system_health_checks()
-    except Exception as error:
-        reference = log_exception("System Health page", error)
-        st.error("System health checks could not be completed.")
-        st.caption(f"Error reference: {reference}")
-        health_rows = []
-
-    if health_rows:
-        status = overall_health_status(health_rows)
-        if status == "PASS":
-            st.success("All current prototype health checks passed.")
-        elif status == "WARN":
-            st.warning("Health checks completed with warnings.")
-        else:
-            st.error("One or more health checks failed.")
-
-        summary = st.columns(3)
-        summary[0].metric(
-            "Passed", sum(row["status"] == "PASS" for row in health_rows)
-        )
-        summary[1].metric(
-            "Warnings", sum(row["status"] == "WARN" for row in health_rows)
-        )
-        summary[2].metric(
-            "Failed", sum(row["status"] == "FAIL" for row in health_rows)
-        )
-
-        st.dataframe(
-            pd.DataFrame(health_rows),
-            width="stretch",
-            hide_index=True,
-        )
-
-with audit_tab:
-    st.subheader("Append-Only System Audit Log")
-    st.info(
-        "PostgreSQL triggers capture changes to critical operational and "
-        "administrative tables. The application has no edit/delete action "
-        "for audit records."
+    render_dashboard_section_header(
+        title="System Health Checks",
+        subtitle=(
+            "Review failed and warning conditions first, then confirm the "
+            "supporting readiness detail for passing checks."
+        ),
     )
 
-    try:
-        audit_rows = list_audit_entries(limit=500)
-    except AuditServiceError as error:
-        st.error(str(error))
-        audit_rows = []
-    except Exception as error:
-        reference = log_exception("Audit Log page", error)
-        st.error("The audit log could not be loaded.")
-        st.caption(f"Error reference: {reference}")
-        audit_rows = []
+    render_kpi_grid(
+        [
+            {"label": "Passed", "value": passed_count},
+            {"label": "Warnings", "value": warning_count},
+            {"label": "Failed", "value": failed_count},
+        ],
+        compact=True,
+    )
+
+    if not health_rows:
+        st.info("No system health result is currently available.")
+    else:
+        ordered_health_rows = sorted(
+            health_rows,
+            key=lambda row: (
+                HEALTH_STATUS_ORDER.get(str(row["status"]), 99),
+                str(row["check"]),
+            ),
+        )
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Status": row["status"],
+                        "Check": row["check"],
+                        "Detail": row["detail"],
+                    }
+                    for row in ordered_health_rows
+                ]
+            ),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Status": st.column_config.TextColumn(
+                    "Status",
+                    width=80,
+                    pinned=True,
+                ),
+                "Check": st.column_config.TextColumn(
+                    "Check",
+                    width=220,
+                ),
+                "Detail": st.column_config.TextColumn(
+                    "Readiness Detail",
+                    width=560,
+                ),
+            },
+        )
+
+        if system_status == "PASS":
+            st.info(
+                "Automated checks passed. Production readiness still depends "
+                "on the manual deployment and recovery gates in the runbook."
+            )
+
+with audit_tab:
+    render_dashboard_section_header(
+        title="Immutable System Audit Trail",
+        subtitle=(
+            "Filter recent changes by data area and operation, then inspect "
+            "the exact recorded before-and-after state."
+        ),
+    )
+    st.info(
+        "PostgreSQL triggers append changes to critical operational and "
+        "administrative tables. This application provides no edit or delete "
+        "action for audit records."
+    )
 
     if not audit_rows:
         st.info(
@@ -90,115 +351,371 @@ with audit_tab:
             "infrastructure was installed."
         )
     else:
-        table_options = sorted({str(row["table_name"]) for row in audit_rows})
-        operation_options = sorted({str(row["operation"]) for row in audit_rows})
-
+        table_options = sorted(
+            {str(row["table_name"]) for row in audit_rows}
+        )
+        operation_options = sorted(
+            {str(row["operation"]) for row in audit_rows}
+        )
         filters = st.columns(2)
         selected_tables = filters[0].multiselect(
-            "Tables", options=table_options
+            "Data areas",
+            options=table_options,
+            format_func=audit_data_area_label,
         )
         selected_operations = filters[1].multiselect(
-            "Operations", options=operation_options
+            "Operations",
+            options=operation_options,
+            format_func=audit_operation_label,
         )
 
         filtered_rows = [
             row
             for row in audit_rows
-            if (not selected_tables or row["table_name"] in selected_tables)
+            if (
+                not selected_tables
+                or str(row["table_name"]) in selected_tables
+            )
             and (
                 not selected_operations
-                or row["operation"] in selected_operations
+                or str(row["operation"]) in selected_operations
             )
         ]
 
+        st.caption(
+            f"Showing {len(filtered_rows)} of {len(audit_rows)} loaded entries."
+        )
         st.dataframe(
             pd.DataFrame(
                 [
                     {
+                        "When": format_datetime(row["occurred_at"]),
+                        "Action": audit_operation_label(row["operation"]),
+                        "Data Area": audit_data_area_label(row["table_name"]),
+                        "Record": row["record_id"] or "—",
+                        "Actor": row["actor_snapshot"] or "System",
                         "Audit ID": row["id"],
-                        "When": row["occurred_at"],
-                        "Table": row["table_name"],
-                        "Operation": row["operation"],
-                        "Record ID": row["record_id"],
-                        "Actor": row["actor_snapshot"],
                     }
                     for row in filtered_rows
                 ]
             ),
             width="stretch",
             hide_index=True,
+            column_config={
+                "When": st.column_config.TextColumn(
+                    "When",
+                    width=175,
+                    pinned=True,
+                ),
+                "Action": st.column_config.TextColumn(
+                    "Action",
+                    width=90,
+                ),
+                "Data Area": st.column_config.TextColumn(
+                    "Data Area",
+                    width=175,
+                ),
+                "Record": st.column_config.TextColumn(
+                    "Record",
+                    width=90,
+                ),
+                "Actor": st.column_config.TextColumn(
+                    "Actor",
+                    width=260,
+                ),
+                "Audit ID": st.column_config.NumberColumn(
+                    "Audit ID",
+                    width=80,
+                    format="%d",
+                ),
+            },
         )
 
         if filtered_rows:
-            row_by_id = {int(row["id"]): row for row in filtered_rows}
+            row_by_id = {
+                int(row["id"]): row for row in filtered_rows
+            }
             selected_audit_id = st.selectbox(
-                "Inspect audit entry",
+                "Inspect exact audit entry",
                 options=list(row_by_id),
                 format_func=lambda audit_id: (
-                    f"#{audit_id} - {row_by_id[audit_id]['operation']} "
-                    f"{row_by_id[audit_id]['table_name']}"
+                    f"#{audit_id} — "
+                    f"{audit_operation_label(row_by_id[audit_id]['operation'])} "
+                    f"{audit_data_area_label(row_by_id[audit_id]['table_name'])} "
+                    f"record {row_by_id[audit_id]['record_id'] or '—'}"
                 ),
             )
             selected = row_by_id[selected_audit_id]
 
+            inspection_columns = st.columns(3)
+            inspection_columns[0].markdown(
+                f"**Occurred:** {format_datetime(selected['occurred_at'])}"
+            )
+            inspection_columns[1].markdown(
+                f"**Actor:** {selected['actor_snapshot'] or 'System'}"
+            )
+            inspection_columns[2].markdown(
+                f"**Audit ID:** #{selected_audit_id}"
+            )
+
             before_column, after_column = st.columns(2)
             with before_column:
-                st.markdown("**Previous row state**")
+                st.markdown("### Previous Row State")
                 st.code(
-                    json.dumps(selected["old_data"], indent=2, default=str)
+                    json.dumps(
+                        selected["old_data"],
+                        indent=2,
+                        default=str,
+                        ensure_ascii=False,
+                    )
                     if selected["old_data"] is not None
                     else "No previous row state.",
                     language="json",
                 )
             with after_column:
-                st.markdown("**New row state**")
+                st.markdown("### New Row State")
                 st.code(
-                    json.dumps(selected["new_data"], indent=2, default=str)
+                    json.dumps(
+                        selected["new_data"],
+                        indent=2,
+                        default=str,
+                        ensure_ascii=False,
+                    )
                     if selected["new_data"] is not None
                     else "No new row state.",
                     language="json",
                 )
 
 with backup_tab:
-    st.subheader("Verified PostgreSQL Backups")
+    render_dashboard_section_header(
+        title="Verified Backup & Recovery",
+        subtitle=(
+            "Create and review verified local PostgreSQL archives, then use "
+            "the controlled terminal procedure for restore testing."
+        ),
+    )
     st.warning(
-        "Prototype backups are stored on the machine running the app. "
-        "Off-machine/off-site retention remains a deployment requirement."
+        "These archives are stored on the application machine. Approved "
+        "off-machine or off-site retention remains a production requirement."
     )
 
-    if st.button(
-        "Create Verified Backup Now",
-        type="primary",
-        width="stretch",
-    ):
-        try:
-            result = create_database_backup()
-        except BackupServiceError as error:
-            st.error(str(error))
-        except Exception as error:
-            reference = log_exception("Administrator backup action", error)
-            st.error("The backup could not be created.")
-            st.caption(f"Error reference: {reference}")
-        else:
-            st.success("Verified PostgreSQL backup created successfully.")
-            st.write("**Backup file:**", result["backup_path"])
-            st.write("**SHA-256:**", result["sha256"])
+    render_kpi_grid(
+        [
+            {"label": "Local Archives", "value": len(backup_rows)},
+            {"label": "Verified", "value": verified_backup_count},
+            {
+                "label": "Latest Backup",
+                "value": latest_backup_date if latest_backup else "None",
+                "meta": (
+                    f"{latest_backup_time} · "
+                    f"{format_size(latest_backup.get('size_bytes'))}"
+                    if latest_backup
+                    else "No local archive"
+                ),
+            },
+        ],
+        compact=True,
+    )
 
-    backup_rows = list_backups()
-    if backup_rows:
-        st.dataframe(
-            pd.DataFrame(backup_rows),
-            width="stretch",
-            hide_index=True,
+    create_backup_tab, archive_tab, restore_tab = st.tabs(
+        (
+            "Create Verified Backup",
+            f"Backup Archive ({len(backup_rows)})",
+            "Restore Drill Guidance",
         )
-    else:
-        st.info("No local backup archives are currently listed.")
-
-    st.markdown("### Restore Drill")
-    st.write(
-        "Run the restore test from the PyCharm terminal. It creates a "
-        "temporary database only when the configured PostgreSQL role has "
-        "CREATEDB permission, verifies the restored revision/table counts, "
-        "and removes the temporary database."
     )
-    st.code("python scripts/restore_test.py --latest", language="powershell")
+
+    with create_backup_tab:
+        render_workflow_section(
+            step=1,
+            title="Confirm Backup Context",
+            subtitle=(
+                "The archive captures the configured PostgreSQL database, "
+                "schema revision, and current table-count evidence."
+            ),
+        )
+        st.info(
+            "Creating a backup does not change operational records. It writes "
+            "a new timestamped archive, metadata file, and SHA-256 checksum."
+        )
+
+        render_workflow_section(
+            step=2,
+            title="Authorize Local Archive Creation",
+            subtitle=(
+                "Confirm that the application machine is an approved temporary "
+                "backup location before running PostgreSQL backup tools."
+            ),
+        )
+        with st.form("create_verified_database_backup"):
+            backup_confirmation = st.checkbox(
+                "I authorize creation of a verified local database archive."
+            )
+            create_backup = st.form_submit_button(
+                "Create Verified Backup",
+                type="primary",
+                width="stretch",
+                disabled=not backup_confirmation,
+            )
+
+        if create_backup:
+            try:
+                result = create_database_backup()
+            except BackupServiceError as error:
+                st.error(str(error))
+            except Exception as error:
+                reference = log_exception(
+                    "Administrator backup action",
+                    error,
+                )
+                st.error("The backup could not be created.")
+                st.caption(f"Error reference: {reference}")
+            else:
+                st.session_state[
+                    "system_admin_backup_success"
+                ] = (
+                    "Verified PostgreSQL backup created: "
+                    f"{result['backup_path']}"
+                )
+                st.rerun()
+
+    with archive_tab:
+        render_dashboard_section_header(
+            title="Local Backup Archive",
+            subtitle=(
+                "Scan verification state, creation time, size, revision, and "
+                "short integrity reference for each local archive."
+            ),
+        )
+        if not backup_rows:
+            st.info("No local backup archive is currently listed.")
+        else:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Archive Reference": archive_reference(
+                                row["filename"]
+                            ),
+                            "Verified": (
+                                "Yes"
+                                if row.get("archive_verified") is True
+                                else "No"
+                            ),
+                            "Created": format_datetime(row.get("created_at")),
+                            "Size": format_size(row.get("size_bytes")),
+                            "Revision": row.get("alembic_revision") or "—",
+                            "Integrity": compact_hash(row.get("sha256")),
+                        }
+                        for row in backup_rows
+                    ]
+                ),
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Archive Reference": st.column_config.TextColumn(
+                        "Archive Reference",
+                        width=160,
+                        pinned=True,
+                    ),
+                    "Verified": st.column_config.TextColumn(
+                        "Verified",
+                        width=80,
+                    ),
+                    "Created": st.column_config.TextColumn(
+                        "Created",
+                        width=175,
+                    ),
+                    "Size": st.column_config.TextColumn(
+                        "Size",
+                        width=85,
+                    ),
+                    "Revision": st.column_config.TextColumn(
+                        "Revision",
+                        width=125,
+                    ),
+                    "Integrity": st.column_config.TextColumn(
+                        "Integrity",
+                        width=125,
+                    ),
+                },
+            )
+
+            backup_by_filename = {
+                str(row["filename"]): row for row in backup_rows
+            }
+            selected_backup_name = st.selectbox(
+                "Inspect backup evidence",
+                options=list(backup_by_filename),
+            )
+            selected_backup = backup_by_filename[selected_backup_name]
+
+            evidence_columns = st.columns(3)
+            evidence_columns[0].markdown(
+                "**Verification:** "
+                + (
+                    "Archive readable"
+                    if selected_backup.get("archive_verified") is True
+                    else "Verification not recorded"
+                )
+            )
+            evidence_columns[1].markdown(
+                "**Schema revision:** "
+                f"{selected_backup.get('alembic_revision') or 'Not recorded'}"
+            )
+            evidence_columns[2].markdown(
+                "**Size:** "
+                f"{format_size(selected_backup.get('size_bytes'))}"
+            )
+            st.caption("SHA-256 integrity hash")
+            st.code(
+                str(selected_backup.get("sha256") or "Not recorded"),
+                language=None,
+            )
+            st.caption("Local archive path")
+            st.code(str(selected_backup["path"]), language=None)
+
+    with restore_tab:
+        render_dashboard_section_header(
+            title="Controlled Restore Drill",
+            subtitle=(
+                "Use the dedicated maintenance workflow to verify restoration "
+                "without overwriting the configured operational database."
+            ),
+        )
+        st.info(
+            "The restore drill creates a disposable database only when the "
+            "configured maintenance role is authorized, restores the archive "
+            "as the application role, verifies revision and table counts, and "
+            "then removes the disposable database."
+        )
+        render_workflow_section(
+            step=1,
+            title="Keep PostgreSQL Running",
+            subtitle="The drill requires access to the configured database server.",
+        )
+        render_workflow_section(
+            step=2,
+            title="Run the Latest Verified Archive",
+            subtitle=(
+                "Execute the controlled recovery script from the project "
+                "terminal; passwords are prompted rather than passed as arguments."
+            ),
+        )
+        st.code(
+            "python scripts/restore_test.py --latest",
+            language="powershell",
+        )
+        render_workflow_section(
+            step=3,
+            title="Preserve Recovery Evidence",
+            subtitle=(
+                "Review the reported schema, trigger, revision, and row-count "
+                "checks before recording the drill as complete."
+            ),
+        )
+        st.warning(
+            "Restore operations are intentionally unavailable as an in-app "
+            "button. They require terminal control and the dedicated "
+            "restore-maintenance role."
+        )
