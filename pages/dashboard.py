@@ -1154,6 +1154,27 @@ if attention_follow_up_rows:
         )
 
 render_dashboard_section_header(
+    title="Non-Displaced Population",
+    subtitle=(
+        "Affected people who remain in their homes."
+    ),
+)
+
+render_kpi_grid(
+    [
+        {
+            "label": "Non-Displaced — Families",
+            "value": f"{int(summary['affected_not_displaced_families']):,}",
+        },
+        {
+            "label": "Non-Displaced — Individuals",
+            "value": f"{int(summary['affected_not_displaced_individuals']):,}",
+        },
+    ],
+    compact=False,
+)
+
+render_dashboard_section_header(
     title="Current Evacuation Summary",
     subtitle=(
         "Affected population and current evacuation figures for the "
