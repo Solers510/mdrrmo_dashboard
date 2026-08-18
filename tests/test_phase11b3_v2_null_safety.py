@@ -23,11 +23,15 @@ class Phase11B3NullSafetyContracts(unittest.TestCase):
     def test_four_item_detail_summaries_are_not_compact_three_column_grids(self):
         source = DASHBOARD_PATH.read_text(encoding="utf-8-sig")
         evac_start = source.index('title="Evacuation Center Operations"')
-        quality_start = source.index('title="Source Reconciliation"')
+        quality_start = source.index('title="Report Consistency Checks"')
         evac = source[evac_start:quality_start]
         quality = source[quality_start:]
         evac_grid = evac[evac.index("render_kpi_grid("):evac.index("if not evacuation_rows:")]
-        quality_grid = quality[quality.index("render_kpi_grid("):quality.index("if not dashboard[")]
+        quality_grid = quality[
+            quality.index("render_kpi_grid(") : quality.index(
+                "if not reconciliation_available:"
+            )
+        ]
         self.assertNotIn("compact=True", evac_grid)
         self.assertNotIn("compact=True", quality_grid)
 

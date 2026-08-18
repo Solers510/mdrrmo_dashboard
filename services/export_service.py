@@ -188,7 +188,7 @@ def build_excel_report(
             ["Official Reference", event.get("official_reference")],
             ["Situation Overview", event.get("situation_overview")],
             ["", ""],
-            ["Affected Barangays", population.get("affected_barangays", 0)],
+            ["Barangays with Affected People", population.get("affected_barangays", 0)],
             ["Affected Families", population.get("affected_families", 0)],
             ["Affected Individuals", population.get("affected_individuals", 0)],
             ["Inside EC Families", population.get("inside_ec_families", 0)],
@@ -197,8 +197,8 @@ def build_excel_report(
             ["Outside EC Individuals", population.get("outside_ec_individuals", 0)],
             ["Total Displaced Families", population.get("displaced_families", 0)],
             ["Total Displaced Individuals", population.get("displaced_individuals", 0)],
-            ["Affected, Not Displaced - Families", population.get("affected_not_displaced_families", 0)],
-            ["Affected, Not Displaced - Individuals", population.get("affected_not_displaced_individuals", 0)],
+            ["Affected Families Not Included in Displacement Totals", population.get("affected_not_displaced_families", 0)],
+            ["Affected Individuals Not Included in Displacement Totals", population.get("affected_not_displaced_individuals", 0)],
             ["Pending Rescue Requests", population.get("pending_rescue_requests", 0)],
             ["Impassable Roads", population.get("impassable_roads", 0)],
             ["Power Interruptions", population.get("interrupted_power", 0)],
@@ -657,7 +657,7 @@ def build_pdf_report(
 
         summary_rows = [
             [
-                "Affected Barangays",
+                "Barangays with Affected People",
                 population.get("affected_barangays", 0),
                 "Affected Families",
                 population.get("affected_families", 0),

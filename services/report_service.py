@@ -201,6 +201,41 @@ def _select_dashboard_payload(
     )
 
 
+def _select_reconciliation_payload(
+    dashboard: dict[str, object],
+    report_mode: str,
+) -> tuple[
+    dict[str, object],
+    list[dict[str, object]],
+    bool,
+]:
+    if report_mode == REPORT_MODE_PROVISIONAL:
+        prefix = "provisional"
+    elif report_mode == REPORT_MODE_OFFICIAL:
+        prefix = "official"
+    else:
+        raise ReportValidationError(
+            "Select a valid report mode."
+        )
+
+    return (
+        dashboard.get(
+            f"{prefix}_reconciliation_summary",
+            dashboard.get("reconciliation_summary", {}),
+        ),
+        dashboard.get(
+            f"{prefix}_reconciliation_rows",
+            dashboard.get("reconciliation_rows", []),
+        ),
+        bool(
+            dashboard.get(
+                f"{prefix}_reconciliation_available",
+                dashboard.get("reconciliation_available", False),
+            )
+        ),
+    )
+
+
 def create_report_snapshot(
     *,
     report_mode: str,
@@ -236,6 +271,14 @@ def create_report_snapshot(
         evacuation_summary,
         evacuation_rows,
     ) = _select_dashboard_payload(
+        dashboard,
+        report_mode,
+    )
+    (
+        reconciliation_summary,
+        reconciliation_rows,
+        reconciliation_available,
+    ) = _select_reconciliation_payload(
         dashboard,
         report_mode,
     )
@@ -310,20 +353,9 @@ def create_report_snapshot(
                 "barangays": barangay_rows,
                 "evacuation_summary": evacuation_summary,
                 "evacuation_centers": evacuation_rows,
-                "reconciliation_summary": dashboard.get(
-                    "reconciliation_summary",
-                    {},
-                ),
-                "reconciliation": dashboard.get(
-                    "reconciliation_rows",
-                    [],
-                ),
-                "reconciliation_available": bool(
-                    dashboard.get(
-                        "reconciliation_available",
-                        False,
-                    )
-                ),
+                "reconciliation_summary": reconciliation_summary,
+                "reconciliation": reconciliation_rows,
+                "reconciliation_available": reconciliation_available,
                 "incidents": incidents,
             }
 

@@ -7,6 +7,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 
+from config.runtime import bounded_integer, is_cloud_deployment
 from database.connection import engine
 from services.backup_service import DEFAULT_BACKUP_DIRECTORY, find_postgresql_tool
 from utils.error_handling import LOG_DIRECTORY
@@ -29,6 +30,134 @@ def _directory_writable(path: Path) -> bool:
         temporary_path = Path(handle.name)
     temporary_path.unlink(missing_ok=True)
     return True
+
+
+def _cloud_database_checks() -> list[dict[str, str]]:
+    results: list[dict[str, str]] = [
+        _check(
+            "Cloud deployment profile",
+            "PASS",
+            "Cloud safeguards are enabled; local archive controls are disabled.",
+        )
+    ]
+
+    connection_limit = bounded_integer(
+        "CLOUD_DATABASE_CONNECTION_LIMIT",
+        20,
+        minimum=5,
+        maximum=500,
+    )
+    storage_limit_mb = bounded_integer(
+        "CLOUD_DATABASE_STORAGE_LIMIT_MB",
+        1024,
+        minimum=128,
+        maximum=1_000_000,
+    )
+
+    try:
+        with engine.connect() as connection:
+            transport_encrypted = bool(
+                connection.execute(
+                    text(
+                        "SELECT COALESCE((SELECT ssl FROM pg_stat_ssl "
+                        "WHERE pid = pg_backend_pid()), false)"
+                    )
+                ).scalar_one()
+            )
+        results.append(
+            _check(
+                "Database transport encryption",
+                "PASS" if transport_encrypted else "FAIL",
+                "The active PostgreSQL connection uses TLS."
+                if transport_encrypted
+                else "The active PostgreSQL connection is not encrypted.",
+            )
+        )
+    except Exception as error:
+        results.append(
+            _check(
+                "Database transport encryption",
+                "FAIL",
+                f"TLS verification failed: {type(error).__name__}.",
+            )
+        )
+
+    try:
+        with engine.connect() as connection:
+            active_connections = int(
+                connection.execute(
+                    text(
+                        "SELECT COUNT(*) FROM pg_stat_activity "
+                        "WHERE datname = current_database()"
+                    )
+                ).scalar_one()
+            )
+        connection_percent = active_connections / connection_limit * 100
+        results.append(
+            _check(
+                "Cloud database connection budget",
+                "WARN" if connection_percent >= 75 else "PASS",
+                f"{active_connections} of {connection_limit} configured "
+                "connections are currently in use.",
+            )
+        )
+    except Exception as error:
+        results.append(
+            _check(
+                "Cloud database connection budget",
+                "WARN",
+                "Connection utilization could not be inspected: "
+                f"{type(error).__name__}.",
+            )
+        )
+
+    try:
+        with engine.connect() as connection:
+            database_size_bytes = int(
+                connection.execute(
+                    text("SELECT pg_database_size(current_database())")
+                ).scalar_one()
+            )
+        database_size_mb = database_size_bytes / (1024 * 1024)
+        storage_percent = database_size_mb / storage_limit_mb * 100
+        results.append(
+            _check(
+                "Cloud database storage budget",
+                "WARN" if storage_percent >= 75 else "PASS",
+                f"{database_size_mb:.1f} MB of the configured "
+                f"{storage_limit_mb} MB budget is in use.",
+            )
+        )
+    except Exception as error:
+        results.append(
+            _check(
+                "Cloud database storage budget",
+                "WARN",
+                "Database size could not be inspected: "
+                f"{type(error).__name__}.",
+            )
+        )
+
+    try:
+        _directory_writable(LOG_DIRECTORY)
+        results.append(
+            _check(
+                "Cloud runtime storage boundary",
+                "PASS",
+                "Runtime logs are writable but temporary. Database backups "
+                "must be retained outside Streamlit Community Cloud.",
+            )
+        )
+    except Exception as error:
+        results.append(
+            _check(
+                "Cloud runtime storage boundary",
+                "WARN",
+                f"Runtime log storage is not writable: {type(error).__name__}.",
+            )
+        )
+
+    return results
 
 
 def run_system_health_checks() -> list[dict[str, str]]:
@@ -211,37 +340,40 @@ def run_system_health_checks() -> list[dict[str, str]]:
             )
         )
 
-    pg_dump = find_postgresql_tool("pg_dump")
-    pg_restore = find_postgresql_tool("pg_restore")
-    results.append(
-        _check(
-            "PostgreSQL backup tools",
-            "PASS" if pg_dump and pg_restore else "FAIL",
-            (
-                f"pg_dump={pg_dump}; pg_restore={pg_restore}."
-                if pg_dump and pg_restore
-                else "pg_dump and/or pg_restore could not be found."
-            ),
+    if is_cloud_deployment():
+        results.extend(_cloud_database_checks())
+    else:
+        pg_dump = find_postgresql_tool("pg_dump")
+        pg_restore = find_postgresql_tool("pg_restore")
+        results.append(
+            _check(
+                "PostgreSQL backup tools",
+                "PASS" if pg_dump and pg_restore else "FAIL",
+                (
+                    f"pg_dump={pg_dump}; pg_restore={pg_restore}."
+                    if pg_dump and pg_restore
+                    else "pg_dump and/or pg_restore could not be found."
+                ),
+            )
         )
-    )
 
-    for name, directory in (
-        ("Backup directory", DEFAULT_BACKUP_DIRECTORY),
-        ("Application log directory", LOG_DIRECTORY),
-    ):
-        try:
-            _directory_writable(directory)
-            results.append(
-                _check(name, "PASS", f"Writable: {directory}")
-            )
-        except Exception as error:
-            results.append(
-                _check(
-                    name,
-                    "FAIL",
-                    f"Not writable: {type(error).__name__}.",
+        for name, directory in (
+            ("Backup directory", DEFAULT_BACKUP_DIRECTORY),
+            ("Application log directory", LOG_DIRECTORY),
+        ):
+            try:
+                _directory_writable(directory)
+                results.append(
+                    _check(name, "PASS", f"Writable: {directory}")
                 )
-            )
+            except Exception as error:
+                results.append(
+                    _check(
+                        name,
+                        "FAIL",
+                        f"Not writable: {type(error).__name__}.",
+                    )
+                )
 
     return results
 

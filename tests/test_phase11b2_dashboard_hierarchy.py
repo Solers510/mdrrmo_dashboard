@@ -36,7 +36,7 @@ class DashboardHierarchyContracts(
             'title="Attention Required"'
         )
         summary = source.index(
-            'title="Situation Summary"'
+            'title="Current Evacuation Summary"'
         )
 
         self.assertLess(
@@ -98,7 +98,7 @@ class DashboardHierarchyContracts(
         for token in (
             '"Pending Validation"',
             '"Needs Correction"',
-            '"Reconciliation Issue"',
+            '"Record Needs Data Checking"',
             '"Population Consistency Issue"',
         ):
             self.assertIn(
@@ -233,30 +233,32 @@ class DashboardPolishContracts(
             source,
         )
 
-    def test_population_breakdown_is_grouped_by_families_then_individuals(
+    def test_displacement_location_uses_clear_operational_categories(
         self,
     ):
         source = DASHBOARD_PATH.read_text(
             encoding="utf-8-sig"
         )
 
-        labels = (
-            '"Inside EC — Families"',
-            '"Outside EC — Families"',
-            '"Not Displaced — Families"',
-            '"Inside EC — Individuals"',
-            '"Outside EC — Individuals"',
-            '"Not Displaced — Individuals"',
+        self.assertIn(
+            'title="Current Evacuation Summary"',
+            source,
         )
-
-        positions = [
-            source.index(label)
-            for label in labels
-        ]
-
-        self.assertEqual(
-            positions,
-            sorted(positions),
+        self.assertIn(
+            "render_current_evacuation_picture(",
+            source,
+        )
+        self.assertNotIn(
+            '"Not Displaced — Families"',
+            source,
+        )
+        self.assertNotIn(
+            '"Not Displaced — Individuals"',
+            source,
+        )
+        self.assertNotIn(
+            "Affected — Not Recorded as Displaced",
+            source,
         )
 
     def test_relative_age_grammar_has_no_day_parentheses(
@@ -299,7 +301,7 @@ class DashboardPolishContracts(
             source,
         )
         self.assertIn(
-            '"Reconciliation Issue"',
+            '"Record Needs Data Checking"',
             source,
         )
 

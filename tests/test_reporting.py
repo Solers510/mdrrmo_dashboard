@@ -10,6 +10,9 @@ from services.export_service import (
     report_filename,
 )
 from services.report_service import (
+    REPORT_MODE_OFFICIAL,
+    REPORT_MODE_PROVISIONAL,
+    _select_reconciliation_payload,
     canonical_snapshot_json,
     snapshot_sha256,
 )
@@ -160,6 +163,32 @@ class SnapshotIntegrityTests(unittest.TestCase):
             snapshot_sha256(second),
         )
 
+    def test_reconciliation_payload_follows_report_mode(self):
+        dashboard = {
+            "provisional_reconciliation_summary": {"match": 2},
+            "provisional_reconciliation_rows": [{"mode": "provisional"}],
+            "provisional_reconciliation_available": True,
+            "official_reconciliation_summary": {"match": 1},
+            "official_reconciliation_rows": [{"mode": "official"}],
+            "official_reconciliation_available": False,
+        }
+
+        provisional = _select_reconciliation_payload(
+            dashboard,
+            REPORT_MODE_PROVISIONAL,
+        )
+        official = _select_reconciliation_payload(
+            dashboard,
+            REPORT_MODE_OFFICIAL,
+        )
+
+        self.assertEqual(provisional[0], {"match": 2})
+        self.assertEqual(provisional[1], [{"mode": "provisional"}])
+        self.assertTrue(provisional[2])
+        self.assertEqual(official[0], {"match": 1})
+        self.assertEqual(official[1], [{"mode": "official"}])
+        self.assertFalse(official[2])
+
 
 class ExportTests(unittest.TestCase):
     def test_excel_export_contains_expected_sheets(self):
@@ -195,6 +224,12 @@ class ExportTests(unittest.TestCase):
             summary["A1"].value,
             "MDRRMO Naic Situation Report",
         )
+        labels = {
+            summary.cell(row=row, column=1).value
+            for row in range(1, summary.max_row + 1)
+        }
+        self.assertIn("Barangays with Affected People", labels)
+        self.assertNotIn("Affected, Not Displaced - Families", labels)
 
     def test_pdf_export_is_pdf(self):
         data = build_pdf_report(

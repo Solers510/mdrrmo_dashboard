@@ -1,19 +1,23 @@
+import importlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import services.dashboard_service as dashboard_service
+import utils.ui as dashboard_ui
 
 from config.access_control import (
     PERMISSION_VIEW_DASHBOARD,
 )
-from services.dashboard_service import (
-    DashboardDataIntegrityError,
-    DashboardServiceError,
-    get_dashboard_bundle,
-)
 from utils.auth import require_permission
+from utils.dashboard_view import (
+    EXPECTED_DASHBOARD_BUNDLE_SCHEMA_VERSION,
+    DashboardViewContractError,
+    build_attention_follow_up_rows,
+    select_dashboard_mode_payload,
+)
 from utils.ui import (
     render_attention_required,
     render_dashboard_mode_status,
@@ -22,6 +26,26 @@ from utils.ui import (
     render_operational_event_strip,
     render_operational_page_header,
 )
+
+
+if not hasattr(
+    dashboard_ui,
+    "render_current_evacuation_picture",
+):
+    dashboard_ui = importlib.reload(dashboard_ui)
+
+render_current_evacuation_picture = (
+    dashboard_ui.render_current_evacuation_picture
+)
+
+if getattr(
+    dashboard_service,
+    "DASHBOARD_BUNDLE_SCHEMA_VERSION",
+    0,
+) != EXPECTED_DASHBOARD_BUNDLE_SCHEMA_VERSION:
+    dashboard_service = importlib.reload(
+        dashboard_service
+    )
 
 
 current_user = require_permission(
@@ -37,6 +61,102 @@ PROVISIONAL_INCLUDED_STATUSES = {
     "For Validation",
     "Validated",
 }
+
+EMPTY_RECONCILIATION_SUMMARY = {
+    "match": 0,
+    "mismatch": 0,
+    "missing_source": 0,
+    "allocation_conflict": 0,
+    "no_current_data": 0,
+}
+
+
+def select_reconciliation_payload(
+    dashboard: dict[str, object],
+    *,
+    view_mode: str,
+) -> tuple[
+    dict[str, object],
+    list[dict[str, object]],
+    bool,
+    bool,
+]:
+    """Select reconciliation data without trusting a hot-reloaded shape."""
+    mode_specific_available = all(
+        key in dashboard
+        for key in (
+            "provisional_reconciliation_summary",
+            "provisional_reconciliation_rows",
+            "provisional_reconciliation_available",
+            "official_reconciliation_summary",
+            "official_reconciliation_rows",
+            "official_reconciliation_available",
+        )
+    )
+
+    if view_mode == "Provisional Operational":
+        summary_source = dashboard.get(
+            "provisional_reconciliation_summary",
+            dashboard.get(
+                "reconciliation_summary",
+                EMPTY_RECONCILIATION_SUMMARY,
+            ),
+        )
+        rows_source = dashboard.get(
+            "provisional_reconciliation_rows",
+            dashboard.get(
+                "reconciliation_rows",
+                [],
+            ),
+        )
+        available = bool(
+            dashboard.get(
+                "provisional_reconciliation_available",
+                dashboard.get(
+                    "reconciliation_available",
+                    False,
+                ),
+            )
+        )
+    elif mode_specific_available:
+        summary_source = dashboard.get(
+            "official_reconciliation_summary",
+            EMPTY_RECONCILIATION_SUMMARY,
+        )
+        rows_source = dashboard.get(
+            "official_reconciliation_rows",
+            [],
+        )
+        available = bool(
+            dashboard.get(
+                "official_reconciliation_available",
+                False,
+            )
+        )
+    else:
+        # An older in-memory service bundle contains only provisional
+        # reconciliation. Do not present it as Official Validated data.
+        summary_source = EMPTY_RECONCILIATION_SUMMARY
+        rows_source = []
+        available = False
+
+    summary = (
+        dict(summary_source)
+        if isinstance(summary_source, dict)
+        else dict(EMPTY_RECONCILIATION_SUMMARY)
+    )
+    rows = (
+        list(rows_source)
+        if isinstance(rows_source, list)
+        else []
+    )
+
+    return (
+        summary,
+        rows,
+        available,
+        mode_specific_available,
+    )
 
 
 def format_datetime(
@@ -513,8 +633,20 @@ def build_reconciliation_operational_table(
     rows: list[dict[str, object]],
 ) -> pd.DataFrame:
     table_rows = []
+    status_labels = {
+        "Match": "Matching Totals",
+        "Mismatch": "Different Totals",
+        "No Barangay Report": "Missing Barangay Report",
+        "No EC Report": "Missing Center Report",
+        "Allocation Conflict": "Assignment Conflict",
+    }
 
     for row in rows:
+        reconciliation_status = str(
+            row[
+                "reconciliation_status"
+            ]
+        )
         table_rows.append(
             {
                 "Barangay": (
@@ -523,9 +655,10 @@ def build_reconciliation_operational_table(
                     ]
                 ),
                 "Status": (
-                    row[
-                        "reconciliation_status"
-                    ]
+                    status_labels.get(
+                        reconciliation_status,
+                        reconciliation_status,
+                    )
                 ),
                 "Families — Barangay / EC": (
                     format_optional_count(row["barangay_inside_families"])
@@ -648,13 +781,13 @@ with mode_column:
     )
 
 try:
-    dashboard = get_dashboard_bundle()
+    dashboard = dashboard_service.get_dashboard_bundle()
 
-except DashboardDataIntegrityError as error:
+except dashboard_service.DashboardDataIntegrityError as error:
     st.error(str(error))
     st.stop()
 
-except DashboardServiceError as error:
+except dashboard_service.DashboardServiceError as error:
     st.error(str(error))
     st.stop()
 
@@ -666,9 +799,9 @@ except Exception:
     st.stop()
 
 
-active_event = dashboard[
+active_event = dashboard.get(
     "active_event"
-]
+)
 
 if active_event is None:
     st.warning(
@@ -730,33 +863,34 @@ if overview:
         )
 
 
-if view_mode == "Provisional Operational":
-    summary = dashboard[
-        "provisional_summary"
-    ]
-    selected_rows = dashboard[
-        "provisional_rows"
-    ]
-    evacuation_summary = dashboard[
-        "provisional_evacuation_summary"
-    ]
-    evacuation_rows = dashboard[
-        "provisional_evacuation_rows"
-    ]
+try:
+    mode_payload = select_dashboard_mode_payload(
+        dashboard,
+        view_mode=view_mode,
+    )
+except DashboardViewContractError:
+    st.error(
+        "The dashboard data service did not return one complete "
+        "and consistent view. Refresh the page. If the problem "
+        "continues, contact the system administrator."
+    )
+    st.stop()
 
-else:
-    summary = dashboard[
-        "official_summary"
-    ]
-    selected_rows = dashboard[
-        "official_rows"
-    ]
-    evacuation_summary = dashboard[
-        "official_evacuation_summary"
-    ]
-    evacuation_rows = dashboard[
-        "official_evacuation_rows"
-    ]
+summary = mode_payload["summary"]
+selected_rows = mode_payload["rows"]
+evacuation_summary = mode_payload["evacuation_summary"]
+evacuation_rows = mode_payload["evacuation_rows"]
+
+
+(
+    reconciliation_summary,
+    reconciliation_rows,
+    reconciliation_available,
+    _mode_specific_reconciliation_available,
+) = select_reconciliation_payload(
+    dashboard,
+    view_mode=view_mode,
+)
 
 render_dashboard_mode_status(
     mode=view_mode
@@ -788,10 +922,6 @@ included_evacuation_rows = [
     )
 ]
 
-
-reconciliation_summary = dashboard[
-    "reconciliation_summary"
-]
 
 reconciliation_issue_count = (
     int(
@@ -943,7 +1073,8 @@ attention_specs = (
     (
         _counted_label(
             reconciliation_issue_count,
-            "Reconciliation Issue",
+            "Record Needs Data Checking",
+            "Records Need Data Checking",
         ),
         reconciliation_issue_count,
         "warning",
@@ -960,9 +1091,7 @@ attention_items = [
     if value > 0
 ]
 
-if not dashboard[
-    "reconciliation_available"
-]:
+if not reconciliation_available:
     attention_items.append(
         {
             "label": "Population Reconciliation",
@@ -983,79 +1112,69 @@ render_attention_required(
     attention_items
 )
 
+attention_follow_up_rows = build_attention_follow_up_rows(
+    barangay_rows=list(selected_rows),
+    evacuation_rows=list(evacuation_rows),
+    reconciliation_rows=reconciliation_rows,
+)
+
+if attention_follow_up_rows:
+    with st.expander(
+        "Review the records behind these alerts",
+        expanded=False,
+    ):
+        st.caption(
+            "Use the Area and Location columns to find the matching "
+            "record in the Barangays, Evacuation Centers, or Report "
+            "Checks section below."
+        )
+        st.dataframe(
+            attention_follow_up_rows,
+            width="stretch",
+            hide_index=True,
+            column_order=(
+                "Area",
+                "Location",
+                "What needs review",
+            ),
+            column_config={
+                "Area": st.column_config.TextColumn(
+                    "Area",
+                    width=130,
+                ),
+                "Location": st.column_config.TextColumn(
+                    "Location",
+                    width=190,
+                ),
+                "What needs review": st.column_config.TextColumn(
+                    "What needs review",
+                    width="large",
+                ),
+            },
+        )
+
 render_dashboard_section_header(
-    title="Situation Summary",
+    title="Current Evacuation Summary",
     subtitle=(
-        "Primary population and evacuation indicators for the selected "
-        "data mode."
+        "Affected population and current evacuation figures for the "
+        "selected data mode."
     ),
 )
 
-render_kpi_grid(
-    [
-        {
-            "label": "Affected Barangays",
-            "value": f"{int(summary['affected_barangays']):,}",
-        },
-        {
-            "label": "Affected Families",
-            "value": f"{int(summary['affected_families']):,}",
-        },
-        {
-            "label": "Affected Individuals",
-            "value": f"{int(summary['affected_individuals']):,}",
-        },
-        {
-            "label": "Displaced Individuals",
-            "value": f"{int(summary['displaced_individuals']):,}",
-        },
-        {
-            "label": "Operational ECs",
-            "value": f"{int(evacuation_summary['open_centers']):,}",
-        },
-    ]
-)
-
-render_dashboard_section_header(
-    title="Population Breakdown",
-    subtitle=(
-        "Location of displaced people plus the affected population "
-        "not currently recorded as displaced."
+render_current_evacuation_picture(
+    affected_barangays=int(summary["affected_barangays"]),
+    affected_families=int(summary["affected_families"]),
+    affected_individuals=int(summary["affected_individuals"]),
+    operational_centers=int(evacuation_summary["open_centers"]),
+    inside_ec_families=int(summary["inside_ec_families"]),
+    inside_ec_individuals=int(summary["inside_ec_individuals"]),
+    outside_ec_families=int(summary["outside_ec_families"]),
+    outside_ec_individuals=int(summary["outside_ec_individuals"]),
+    mode_label=view_mode,
+    barangay_as_of=format_datetime(summary["latest_update"]),
+    center_as_of=format_datetime(
+        evacuation_summary["latest_update"]
     ),
-)
-
-render_kpi_grid(
-    [
-        {
-            "label": "Inside EC — Families",
-            "value": f"{int(summary['inside_ec_families']):,}",
-        },
-        {
-            "label": "Outside EC — Families",
-            "value": f"{int(summary['outside_ec_families']):,}",
-        },
-        {
-            "label": "Not Displaced — Families",
-            "value": (
-                f"{int(summary['affected_not_displaced_families']):,}"
-            ),
-        },
-        {
-            "label": "Inside EC — Individuals",
-            "value": f"{int(summary['inside_ec_individuals']):,}",
-        },
-        {
-            "label": "Outside EC — Individuals",
-            "value": f"{int(summary['outside_ec_individuals']):,}",
-        },
-        {
-            "label": "Not Displaced — Individuals",
-            "value": (
-                f"{int(summary['affected_not_displaced_individuals']):,}"
-            ),
-        },
-    ],
-    compact=True,
 )
 
 render_dashboard_section_header(
@@ -1137,7 +1256,7 @@ barangay_tab, evacuation_tab, quality_tab = st.tabs(
         f"Barangays ({len(selected_rows)})",
         f"Evacuation Centers ({len(evacuation_rows)})",
         (
-            "Data Quality "
+            "Report Checks "
             f"({reconciliation_issue_count})"
         ),
     )
@@ -1446,13 +1565,13 @@ with evacuation_tab:
                 ),
             },
             {
-                "label": "Registered Families",
+                "label": "Center-Reported Families",
                 "value": (
                     f"{int(evacuation_summary['families']):,}"
                 ),
             },
             {
-                "label": "Registered Individuals",
+                "label": "Center-Reported Individuals",
                 "value": (
                     f"{int(evacuation_summary['individuals']):,}"
                 ),
@@ -1473,6 +1592,33 @@ with evacuation_tab:
             },
         ],
     )
+
+    barangay_inside_families = int(
+        summary["inside_ec_families"]
+    )
+    barangay_inside_individuals = int(
+        summary["inside_ec_individuals"]
+    )
+    center_reported_families = int(
+        evacuation_summary["families"]
+    )
+    center_reported_individuals = int(
+        evacuation_summary["individuals"]
+    )
+
+    if (
+        barangay_inside_families != center_reported_families
+        or barangay_inside_individuals != center_reported_individuals
+    ):
+        st.warning(
+            "Barangay and evacuation-center reports currently show "
+            "different inside-center totals. "
+            f"Barangay reports: {barangay_inside_families:,} families / "
+            f"{barangay_inside_individuals:,} individuals. "
+            f"Center reports: {center_reported_families:,} families / "
+            f"{center_reported_individuals:,} individuals. "
+            "Review Report Checks before publishing official figures."
+        )
 
     if not evacuation_rows:
         st.info(
@@ -1659,36 +1805,37 @@ with evacuation_tab:
 
 with quality_tab:
     render_dashboard_section_header(
-        title="Source Reconciliation",
+        title="Report Consistency Checks",
         subtitle=(
-            "Compare barangay inside-EC figures with evacuation-center "
-            "attribution. Differences are review signals, not automatic "
-            "proof that a source is wrong."
+            "Compare inside-evacuation-center totals reported by barangays "
+            "with totals assigned by evacuation centers. Differences show "
+            "what needs verification; they do not automatically mean a "
+            "record is wrong."
         ),
     )
 
     render_kpi_grid(
         [
             {
-                "label": "Matches",
+                "label": "Matching Barangays",
                 "value": (
                     f"{int(reconciliation_summary['match']):,}"
                 ),
             },
             {
-                "label": "Mismatches",
+                "label": "Different Totals",
                 "value": (
                     f"{int(reconciliation_summary['mismatch']):,}"
                 ),
             },
             {
-                "label": "Missing Source",
+                "label": "Missing Report",
                 "value": (
                     f"{int(reconciliation_summary['missing_source']):,}"
                 ),
             },
             {
-                "label": "Allocation Conflicts",
+                "label": "Assignment Conflicts",
                 "value": (
                     f"{int(reconciliation_summary['allocation_conflict']):,}"
                 ),
@@ -1696,19 +1843,15 @@ with quality_tab:
         ],
     )
 
-    if not dashboard[
-        "reconciliation_available"
-    ]:
+    if not reconciliation_available:
         st.warning(
-            "Population reconciliation could not be loaded. "
+            "Report consistency checks could not be loaded. "
             "The main dashboard figures remain available."
         )
     else:
         problem_rows = [
             row
-            for row in dashboard[
-                "reconciliation_rows"
-            ]
+            for row in reconciliation_rows
             if row[
                 "reconciliation_status"
             ]
@@ -1722,8 +1865,8 @@ with quality_tab:
 
         if not problem_rows:
             st.success(
-                "No current population reconciliation issue "
-                "requires attention."
+                "Barangay and evacuation-center totals currently agree, "
+                "and no source report is missing."
             )
         else:
             issue_label = _counted_label(
@@ -1736,7 +1879,7 @@ with quality_tab:
 
             st.warning(
                 f"{len(problem_rows)} {issue_label} "
-                "source or population reconciliation."
+                "a report comparison or a missing source report."
             )
 
             st.dataframe(
@@ -1769,22 +1912,26 @@ with quality_tab:
                     ),
                     "Families — Barangay / EC": (
                         st.column_config.TextColumn(
-                            "Families B / EC",
+                            "Families: Barangay / Center",
                             help=(
-                                "Barangay inside-EC families "
-                                "/ EC-attributed families"
+                                "First number: families reported by the "
+                                "barangay as inside an evacuation center. "
+                                "Second number: families assigned by the "
+                                "evacuation-center reports."
                             ),
-                            width=125,
+                            width=180,
                         )
                     ),
                     "Individuals — Barangay / EC": (
                         st.column_config.TextColumn(
-                            "Individuals B / EC",
+                            "Individuals: Barangay / Center",
                             help=(
-                                "Barangay inside-EC individuals "
-                                "/ EC-attributed individuals"
+                                "First number: individuals reported by the "
+                                "barangay as inside an evacuation center. "
+                                "Second number: individuals assigned by "
+                                "the evacuation-center reports."
                             ),
-                            width=135,
+                            width=190,
                         )
                     ),
                     "Barangay Age": (
@@ -1795,7 +1942,7 @@ with quality_tab:
                     ),
                     "EC Source Age": (
                         st.column_config.TextColumn(
-                            "EC Source Age",
+                            "Center Report Age",
                             width=110,
                         )
                     ),
@@ -1803,7 +1950,7 @@ with quality_tab:
             )
 
             with st.expander(
-                "Full reconciliation source timestamps",
+                "View separate totals and source timestamps",
                 expanded=False,
             ):
                 st.dataframe(
@@ -1820,22 +1967,22 @@ with quality_tab:
                                         "reconciliation_status"
                                     ]
                                 ),
-                                "Barangay Inside EC — Families": (
+                                "Barangay-Reported Inside-Center Families": (
                                     row[
                                         "barangay_inside_families"
                                     ]
                                 ),
-                                "EC Attributed — Families": (
+                                "Center-Reported Families for Barangay": (
                                     row[
                                         "ec_inside_families"
                                     ]
                                 ),
-                                "Barangay Inside EC — Individuals": (
+                                "Barangay-Reported Inside-Center Individuals": (
                                     row[
                                         "barangay_inside_individuals"
                                     ]
                                 ),
-                                "EC Attributed — Individuals": (
+                                "Center-Reported Individuals for Barangay": (
                                     row[
                                         "ec_inside_individuals"
                                     ]
@@ -1845,7 +1992,7 @@ with quality_tab:
                                         "barangay_recorded_at"
                                     ]
                                 ),
-                                "Latest EC Source": (
+                                "Latest Center Report": (
                                     row[
                                         "latest_ec_recorded_at"
                                     ]
@@ -1860,6 +2007,6 @@ with quality_tab:
 
     st.caption(
         "Before correcting or publishing official figures, compare "
-        "timestamps and source documents. Reconciliation remains a "
+        "timestamps and source documents. This checking view remains a "
         "warning workflow and does not rewrite operational reports."
     )

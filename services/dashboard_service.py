@@ -29,6 +29,8 @@ PROVISIONAL_USABLE_STATUSES = {
     "Validated",
 }
 
+DASHBOARD_BUNDLE_SCHEMA_VERSION = 2
+
 
 def _safe_int(value: Any) -> int:
     if value is None:
@@ -89,15 +91,13 @@ def _build_summary(
         if str(row["validation_status"]) in usable_statuses
     ]
 
-    affected_statuses = {
-        "Affected",
-        "Critical",
-    }
-
     affected_barangays = sum(
         1
         for row in usable_rows
-        if row["situation_status"] in affected_statuses
+        if (
+            _safe_int(row["affected_families"]) > 0
+            or _safe_int(row["affected_individuals"]) > 0
+        )
     )
 
     affected_families = sum(
@@ -117,6 +117,14 @@ def _build_summary(
         _safe_int(row["inside_ec_individuals"])
         for row in usable_rows
     )
+    inside_ec_barangays = sum(
+        1
+        for row in usable_rows
+        if (
+            _safe_int(row["inside_ec_families"]) > 0
+            or _safe_int(row["inside_ec_individuals"]) > 0
+        )
+    )
 
     outside_ec_families = sum(
         _safe_int(row["outside_ec_families"])
@@ -125,6 +133,14 @@ def _build_summary(
     outside_ec_individuals = sum(
         _safe_int(row["outside_ec_individuals"])
         for row in usable_rows
+    )
+    outside_ec_barangays = sum(
+        1
+        for row in usable_rows
+        if (
+            _safe_int(row["outside_ec_families"]) > 0
+            or _safe_int(row["outside_ec_individuals"]) > 0
+        )
     )
 
     displaced_families = (
@@ -207,8 +223,10 @@ def _build_summary(
         "affected_individuals": affected_individuals,
         "inside_ec_families": inside_ec_families,
         "inside_ec_individuals": inside_ec_individuals,
+        "inside_ec_barangays": inside_ec_barangays,
         "outside_ec_families": outside_ec_families,
         "outside_ec_individuals": outside_ec_individuals,
+        "outside_ec_barangays": outside_ec_barangays,
         "displaced_families": displaced_families,
         "displaced_individuals": displaced_individuals,
         "affected_not_displaced_families": (
@@ -433,6 +451,7 @@ def get_dashboard_bundle() -> dict[str, object]:
 
             if not active_events:
                 return {
+                    "schema_version": DASHBOARD_BUNDLE_SCHEMA_VERSION,
                     "active_event": None,
                     "provisional_summary": None,
                     "official_summary": None,
@@ -442,6 +461,16 @@ def get_dashboard_bundle() -> dict[str, object]:
                     "official_evacuation_summary": None,
                     "provisional_evacuation_rows": [],
                     "official_evacuation_rows": [],
+                    "provisional_reconciliation_rows": [],
+                    "official_reconciliation_rows": [],
+                    "provisional_reconciliation_summary": (
+                        _build_reconciliation_summary([])
+                    ),
+                    "official_reconciliation_summary": (
+                        _build_reconciliation_summary([])
+                    ),
+                    "provisional_reconciliation_available": True,
+                    "official_reconciliation_available": True,
                     "reconciliation_rows": [],
                     "reconciliation_summary": (
                         _build_reconciliation_summary([])
@@ -538,6 +567,7 @@ def get_dashboard_bundle() -> dict[str, object]:
             )
 
             bundle = {
+                "schema_version": DASHBOARD_BUNDLE_SCHEMA_VERSION,
                 "active_event": active_event,
                 "provisional_summary": (
                     provisional_summary
@@ -566,25 +596,66 @@ def get_dashboard_bundle() -> dict[str, object]:
             }
 
         try:
-            reconciliation_rows = (
-                get_population_reconciliation_queue()
+            provisional_reconciliation_rows = (
+                get_population_reconciliation_queue(
+                    included_statuses=(
+                        "Submitted",
+                        "For Validation",
+                        "Validated",
+                    ),
+                )
             )
         except ValidationServiceError:
-            reconciliation_rows = []
-            reconciliation_available = False
+            provisional_reconciliation_rows = []
+            provisional_reconciliation_available = False
         else:
-            reconciliation_available = True
+            provisional_reconciliation_available = True
 
-        bundle["reconciliation_rows"] = (
-            reconciliation_rows
+        try:
+            official_reconciliation_rows = (
+                get_population_reconciliation_queue(
+                    included_statuses=("Validated",),
+                )
+            )
+        except ValidationServiceError:
+            official_reconciliation_rows = []
+            official_reconciliation_available = False
+        else:
+            official_reconciliation_available = True
+
+        bundle["provisional_reconciliation_rows"] = (
+            provisional_reconciliation_rows
         )
-        bundle["reconciliation_summary"] = (
+        bundle["official_reconciliation_rows"] = (
+            official_reconciliation_rows
+        )
+        bundle["provisional_reconciliation_summary"] = (
             _build_reconciliation_summary(
-                reconciliation_rows
+                provisional_reconciliation_rows
             )
         )
+        bundle["official_reconciliation_summary"] = (
+            _build_reconciliation_summary(
+                official_reconciliation_rows
+            )
+        )
+        bundle["provisional_reconciliation_available"] = (
+            provisional_reconciliation_available
+        )
+        bundle["official_reconciliation_available"] = (
+            official_reconciliation_available
+        )
+
+        # Backward-compatible aliases retain the provisional operational
+        # meaning used before mode-specific reconciliation was introduced.
+        bundle["reconciliation_rows"] = (
+            provisional_reconciliation_rows
+        )
+        bundle["reconciliation_summary"] = (
+            bundle["provisional_reconciliation_summary"]
+        )
         bundle["reconciliation_available"] = (
-            reconciliation_available
+            provisional_reconciliation_available
         )
 
         return bundle

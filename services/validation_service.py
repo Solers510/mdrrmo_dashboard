@@ -192,6 +192,8 @@ def get_evacuation_validation_queue(
 
 
 def get_population_reconciliation_queue(
+    *,
+    included_statuses: tuple[str, ...] | None = None,
 ) -> list[dict[str, object]]:
     """
     Reconcile barangay Inside-EC counts with attributed EC occupancy.
@@ -199,7 +201,18 @@ def get_population_reconciliation_queue(
     Normally, an EC's occupants are attributed to its home barangay.
     Cross-barangay allocation snapshots subtract foreign-origin evacuees
     from the host barangay and add them to their origin barangay.
+
+    When ``included_statuses`` is omitted, the validation workspace keeps
+    its broad operational view. Dashboard and report callers may pass the
+    statuses for their selected data mode so official figures do not mix
+    provisional reports into the reconciliation result.
     """
+    source_statuses = (
+        included_statuses
+        if included_statuses is not None
+        else RECONCILIATION_SOURCE_STATUSES
+    )
+
     try:
         with SessionLocal() as session:
             event_id = _active_event_id(session)
@@ -216,7 +229,7 @@ def get_population_reconciliation_queue(
                 for row in fetch_latest_evacuation_updates_for_event(
                     session,
                     event_id=event_id,
-                    included_statuses=RECONCILIATION_SOURCE_STATUSES,
+                    included_statuses=source_statuses,
                 )
             ]
 
@@ -233,7 +246,7 @@ def get_population_reconciliation_queue(
                 for row in fetch_latest_barangay_updates_for_event(
                     session,
                     event_id=event_id,
-                    included_statuses=RECONCILIATION_SOURCE_STATUSES,
+                    included_statuses=source_statuses,
                 )
             ]
             latest_barangay_by_id = {

@@ -621,6 +621,111 @@ def render_kpi_grid(
         </section>
         """
     )
+
+
+def render_current_evacuation_picture(
+    *,
+    affected_barangays: int,
+    affected_families: int,
+    affected_individuals: int,
+    operational_centers: int,
+    inside_ec_families: int,
+    inside_ec_individuals: int,
+    outside_ec_families: int,
+    outside_ec_individuals: int,
+    mode_label: str,
+    barangay_as_of: str,
+    center_as_of: str,
+) -> None:
+    """Render one compact current-evacuation summary."""
+
+    evacuated_families = (
+        inside_ec_families
+        + outside_ec_families
+    )
+    evacuated_individuals = (
+        inside_ec_individuals
+        + outside_ec_individuals
+    )
+
+    def metric(
+        *,
+        label: str,
+        value: int,
+    ) -> str:
+        return f"""
+        <div class="mdrrmo-evacuation-picture__metric">
+          <span>{escape(label)}</span>
+          <strong>{value:,}</strong>
+        </div>
+        """
+
+    st.html(
+        f"""
+        <section class="mdrrmo-evacuation-picture">
+          <div class="mdrrmo-evacuation-picture__context">
+            <strong>{escape(mode_label)}</strong>
+            <span>
+              Barangay reports as of {escape(barangay_as_of)} &middot;
+              Center reports as of {escape(center_as_of)}
+            </span>
+          </div>
+
+          <div class="mdrrmo-evacuation-picture__overall">
+            <h3>Total Reported Affected Population</h3>
+            <p class="mdrrmo-evacuation-picture__definition">
+              Includes evacuees and affected residents who have not
+              evacuated. Affected does not automatically mean injured,
+              homeless, or staying in an evacuation center.
+            </p>
+            <div class="mdrrmo-evacuation-picture__metrics
+                        mdrrmo-evacuation-picture__metrics--three">
+              {metric(label="Affected Barangays", value=affected_barangays)}
+              {metric(label="Affected Families", value=affected_families)}
+              {metric(label="Affected Individuals", value=affected_individuals)}
+            </div>
+          </div>
+
+          <div class="mdrrmo-evacuation-picture__evacuated">
+            <span>Currently Evacuated</span>
+            <strong>
+              {evacuated_families:,} families &middot;
+              {evacuated_individuals:,} individuals
+            </strong>
+          </div>
+
+          <div class="mdrrmo-evacuation-picture__locations">
+            <article class="mdrrmo-evacuation-picture__location
+                            mdrrmo-evacuation-picture__location--inside">
+              <h3>Inside Evacuation Centers</h3>
+              <div class="mdrrmo-evacuation-picture__metrics
+                          mdrrmo-evacuation-picture__metrics--three">
+                {metric(label="Operational Centers", value=operational_centers)}
+                {metric(label="Families", value=inside_ec_families)}
+                {metric(label="Individuals", value=inside_ec_individuals)}
+              </div>
+            </article>
+
+            <article class="mdrrmo-evacuation-picture__location
+                            mdrrmo-evacuation-picture__location--outside">
+              <h3>Outside Evacuation Centers</h3>
+              <div class="mdrrmo-evacuation-picture__metrics
+                          mdrrmo-evacuation-picture__metrics--two">
+                {metric(label="Families", value=outside_ec_families)}
+                {metric(label="Individuals", value=outside_ec_individuals)}
+              </div>
+            </article>
+          </div>
+
+          <p class="mdrrmo-evacuation-picture__source">
+            Population figures: current barangay reports &middot;
+            Operational-center count: current evacuation-center reports
+          </p>
+        </section>
+        """
+    )
+
+
 def render_workflow_section(
     *,
     step: int,

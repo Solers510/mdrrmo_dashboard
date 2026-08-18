@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from config.access_control import PERMISSION_MANAGE_USERS
+from config.runtime import is_cloud_deployment
 from services.audit_service import AuditServiceError, list_audit_entries
 from services.backup_service import (
     BackupServiceError,
@@ -28,6 +29,7 @@ from utils.ui import (
 
 
 current_user = require_permission(PERMISSION_MANAGE_USERS)
+IS_CLOUD_DEPLOYMENT = is_cloud_deployment()
 
 
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
@@ -155,13 +157,16 @@ except Exception as error:
     st.caption(f"Error reference: {reference}")
     audit_rows = []
 
-try:
-    backup_rows = list_backups()
-except Exception as error:
-    reference = log_exception("Backup archive page", error)
-    st.error("The local backup archive could not be listed.")
-    st.caption(f"Error reference: {reference}")
+if IS_CLOUD_DEPLOYMENT:
     backup_rows = []
+else:
+    try:
+        backup_rows = list_backups()
+    except Exception as error:
+        reference = log_exception("Backup archive page", error)
+        st.error("The local backup archive could not be listed.")
+        st.caption(f"Error reference: {reference}")
+        backup_rows = []
 
 passed_count = sum(row["status"] == "PASS" for row in health_rows)
 warning_count = sum(row["status"] == "WARN" for row in health_rows)
@@ -183,6 +188,34 @@ render_dashboard_section_header(
     ),
 )
 
+recovery_metrics = (
+    [
+        {
+            "label": "Independent Backup",
+            "value": "Not Linked",
+            "meta": "Manual evidence required",
+        },
+        {
+            "label": "Recovery Provider",
+            "value": "Aiven",
+            "meta": "Verify in provider console",
+        },
+    ]
+    if IS_CLOUD_DEPLOYMENT
+    else [
+        {
+            "label": "Verified Backups",
+            "value": verified_backup_count,
+            "meta": f"{len(backup_rows)} local archives",
+        },
+        {
+            "label": "Latest Backup",
+            "value": latest_backup_date if latest_backup else "None",
+            "meta": latest_backup_time,
+        },
+    ]
+)
+
 render_kpi_grid(
     [
         {
@@ -199,16 +232,7 @@ render_kpi_grid(
             "value": len(audit_rows),
             "meta": "Latest 500 maximum",
         },
-        {
-            "label": "Verified Backups",
-            "value": verified_backup_count,
-            "meta": f"{len(backup_rows)} local archives",
-        },
-        {
-            "label": "Latest Backup",
-            "value": latest_backup_date if latest_backup else "None",
-            "meta": latest_backup_time,
-        },
+        *recovery_metrics,
     ]
 )
 
@@ -229,7 +253,22 @@ if warning_count:
             "tone": "warning",
         }
     )
-if not backup_rows:
+if IS_CLOUD_DEPLOYMENT:
+    attention_items.extend(
+        [
+            {
+                "label": "Independent Backup Evidence",
+                "value": "Manual Verification",
+                "tone": "warning",
+            },
+            {
+                "label": "Aiven Recovery Status",
+                "value": "Verify in Console",
+                "tone": "warning",
+            },
+        ]
+    )
+elif not backup_rows:
     attention_items.append(
         {
             "label": "Recovery Evidence",
@@ -246,13 +285,14 @@ elif verified_backup_count < len(backup_rows):
         }
     )
 
-attention_items.append(
-    {
-        "label": "Off-Machine Backup Retention",
-        "value": "Manual Verification",
-        "tone": "warning",
-    }
-)
+if not IS_CLOUD_DEPLOYMENT:
+    attention_items.append(
+        {
+            "label": "Off-Machine Backup Retention",
+            "value": "Manual Verification",
+            "tone": "warning",
+        }
+    )
 
 if attention_items:
     render_attention_required(attention_items)
@@ -263,7 +303,11 @@ health_tab, audit_tab, backup_tab = st.tabs(
     (
         f"Health Checks ({len(health_rows)})",
         f"Audit Trail ({len(audit_rows)})",
-        f"Backup & Recovery ({len(backup_rows)})",
+        (
+            "Cloud Recovery"
+            if IS_CLOUD_DEPLOYMENT
+            else f"Backup & Recovery ({len(backup_rows)})"
+        ),
     )
 )
 
@@ -487,6 +531,103 @@ with audit_tab:
                 )
 
 with backup_tab:
+    if IS_CLOUD_DEPLOYMENT:
+        render_dashboard_section_header(
+            title="Cloud Backup & Recovery",
+            subtitle=(
+                "Review the two required recovery layers for the cloud pilot: "
+                "provider-managed recovery and an independent encrypted archive."
+            ),
+        )
+        st.warning(
+            "Streamlit Community Cloud storage is temporary. Local archive "
+            "creation is disabled in this deployment and no backup file is "
+            "retained by the application container."
+        )
+
+        provider_tab, independent_tab, cloud_restore_tab = st.tabs(
+            (
+                "Aiven Recovery",
+                "Independent Archive",
+                "Restore Drill Guidance",
+            )
+        )
+
+        with provider_tab:
+            render_workflow_section(
+                step=1,
+                title="Verify Provider Recovery",
+                subtitle=(
+                    "An authorized service owner must confirm the current "
+                    "backup and recovery state in the Aiven Console."
+                ),
+            )
+            st.info(
+                "This application cannot independently verify or download "
+                "Aiven-managed recovery backups. Record the console review in "
+                "the approved backup register."
+            )
+            render_workflow_section(
+                step=2,
+                title="Preserve Provider Evidence",
+                subtitle=(
+                    "Record the review date, responsible custodian, service "
+                    "name, and recovery status without copying credentials."
+                ),
+            )
+
+        with independent_tab:
+            render_workflow_section(
+                step=1,
+                title="Use a Trusted Backup Workstation",
+                subtitle=(
+                    "Run PostgreSQL client tools outside Streamlit using the "
+                    "protected Aiven connection details."
+                ),
+            )
+            st.code(
+                "python scripts/backup_database.py --directory "
+                '"<APPROVED_ENCRYPTED_BACKUP_FOLDER>"',
+                language="powershell",
+            )
+            render_workflow_section(
+                step=2,
+                title="Retain the Complete Backup Set",
+                subtitle=(
+                    "Keep the .backup archive, metadata JSON, and SHA-256 "
+                    "checksum together in approved off-platform storage."
+                ),
+            )
+            st.warning(
+                "Do not place database archives in GitHub, a public link, "
+                "ordinary email, or Streamlit application storage."
+            )
+
+        with cloud_restore_tab:
+            render_workflow_section(
+                step=1,
+                title="Use an Isolated PostgreSQL Target",
+                subtitle=(
+                    "Restore testing must use a disposable local or staging "
+                    "server, never the live Aiven pilot database."
+                ),
+            )
+            render_workflow_section(
+                step=2,
+                title="Verify Recovery Evidence",
+                subtitle=(
+                    "Compare the Alembic revision, audit triggers, table counts, "
+                    "and integrity checksum before recording a successful drill."
+                ),
+            )
+            st.warning(
+                "Cloud restore operations remain intentionally unavailable as "
+                "an in-app button. They require a controlled maintenance "
+                "workstation and separately authorized credentials."
+            )
+
+        st.stop()
+
     render_dashboard_section_header(
         title="Verified Backup & Recovery",
         subtitle=(

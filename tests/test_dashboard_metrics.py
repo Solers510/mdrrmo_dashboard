@@ -19,6 +19,44 @@ NOW = datetime(
 
 
 class DashboardSummaryTests(unittest.TestCase):
+    def test_affected_barangays_follow_population_not_situation_label(self):
+        base = {
+            "validation_status": "Validated",
+            "inside_ec_families": 0,
+            "inside_ec_individuals": 0,
+            "outside_ec_families": 0,
+            "outside_ec_individuals": 0,
+            "rescue_requests": 0,
+            "road_status": "Passable",
+            "power_status": "Available",
+            "water_status": "Available",
+            "recorded_at": NOW,
+        }
+        rows = [
+            {
+                **base,
+                "situation_status": "Monitoring",
+                "affected_families": 4,
+                "affected_individuals": 16,
+            },
+            {
+                **base,
+                "situation_status": "Affected",
+                "affected_families": 0,
+                "affected_individuals": 0,
+            },
+        ]
+
+        summary = _build_summary(
+            rows=rows,
+            total_barangays=30,
+            usable_statuses={"Validated"},
+        )
+
+        self.assertEqual(summary["affected_barangays"], 1)
+        self.assertEqual(summary["affected_families"], 4)
+        self.assertEqual(summary["affected_individuals"], 16)
+
     def test_displacement_and_remaining_population(self):
         rows = [
             {
@@ -56,6 +94,8 @@ class DashboardSummaryTests(unittest.TestCase):
             summary["displaced_individuals"],
             28,
         )
+        self.assertEqual(summary["inside_ec_barangays"], 1)
+        self.assertEqual(summary["outside_ec_barangays"], 1)
         self.assertEqual(
             summary[
                 "affected_not_displaced_families"

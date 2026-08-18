@@ -597,10 +597,10 @@ except DataIntegrityValidationError as error:
 
 
 render_dashboard_section_header(
-    title="Automatic Population Check",
+    title="Population Consistency Check",
     subtitle=(
-        "The system verifies that displaced and remaining populations are "
-        "consistent with the affected totals before submission."
+        "The system verifies that displaced counts do not exceed the "
+        "affected totals before submission."
     ),
 )
 
@@ -608,10 +608,18 @@ if reconciliation is not None:
     render_kpi_grid(
         [
             {
+                "label": "Affected Families",
+                "value": f"{int(affected_families):,}",
+            },
+            {
                 "label": "Displaced Families",
                 "value": (
                     f"{int(reconciliation.displaced_families):,}"
                 ),
+            },
+            {
+                "label": "Affected Individuals",
+                "value": f"{int(affected_individuals):,}",
             },
             {
                 "label": "Displaced Individuals",
@@ -619,23 +627,11 @@ if reconciliation is not None:
                     f"{int(reconciliation.displaced_individuals):,}"
                 ),
             },
-            {
-                "label": "Not Displaced — Families",
-                "value": (
-                    f"{int(reconciliation.remaining_families):,}"
-                ),
-            },
-            {
-                "label": "Not Displaced — Individuals",
-                "value": (
-                    f"{int(reconciliation.remaining_individuals):,}"
-                ),
-            },
         ]
     )
 
     st.success(
-        "Population figures are internally consistent."
+        "Displaced counts are within the affected population totals."
     )
 
 else:

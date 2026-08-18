@@ -144,7 +144,7 @@ class OperationalDetailContracts(
             quality_source,
         )
         self.assertIn(
-            'title="Source Reconciliation"',
+            'title="Report Consistency Checks"',
             quality_source,
         )
 
@@ -160,15 +160,15 @@ class OperationalDetailContracts(
             source,
         )
         self.assertIn(
-            '"Families B / EC"',
+            '"Families: Barangay / Center"',
             source,
         )
         self.assertIn(
-            '"Individuals B / EC"',
+            '"Individuals: Barangay / Center"',
             source,
         )
         self.assertIn(
-            '"Full reconciliation source timestamps"',
+            '"View separate totals and source timestamps"',
             source,
         )
 
