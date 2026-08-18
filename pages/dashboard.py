@@ -1019,8 +1019,33 @@ render_kpi_grid(
 render_dashboard_section_header(
     title="Population Breakdown",
     subtitle=(
-        "Location of displaced people plus the affected population "
-        "not currently recorded as displaced."
+        "Location of affected people: non-displaced in their homes, "
+        "displaced inside evacuation centers, or displaced outside centers."
+    ),
+)
+
+render_kpi_grid(
+    [
+        {
+            "label": "Non-Displaced — Families",
+            "value": (
+                f"{int(summary['affected_not_displaced_families']):,}"
+            ),
+        },
+        {
+            "label": "Non-Displaced — Individuals",
+            "value": (
+                f"{int(summary['affected_not_displaced_individuals']):,}"
+            ),
+        },
+    ],
+    compact=False,
+)
+
+render_dashboard_section_header(
+    title="Displaced Population",
+    subtitle=(
+        "Location of affected people who have left their homes."
     ),
 )
 
@@ -1035,24 +1060,12 @@ render_kpi_grid(
             "value": f"{int(summary['outside_ec_families']):,}",
         },
         {
-            "label": "Not Displaced — Families",
-            "value": (
-                f"{int(summary['affected_not_displaced_families']):,}"
-            ),
-        },
-        {
             "label": "Inside EC — Individuals",
             "value": f"{int(summary['inside_ec_individuals']):,}",
         },
         {
             "label": "Outside EC — Individuals",
             "value": f"{int(summary['outside_ec_individuals']):,}",
-        },
-        {
-            "label": "Not Displaced — Individuals",
-            "value": (
-                f"{int(summary['affected_not_displaced_individuals']):,}"
-            ),
         },
     ],
     compact=True,
