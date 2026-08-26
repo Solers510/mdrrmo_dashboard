@@ -622,7 +622,6 @@ def render_kpi_grid(
         """
     )
 
-
 def render_current_evacuation_picture(
     *,
     affected_barangays: int,
@@ -633,99 +632,91 @@ def render_current_evacuation_picture(
     inside_ec_individuals: int,
     outside_ec_families: int,
     outside_ec_individuals: int,
-    mode_label: str,
-    barangay_as_of: str,
-    center_as_of: str,
+    non_displaced_families: int = 0,
+    non_displaced_individuals: int = 0,
+    mode_label: str = "Official Validated",
+    barangay_as_of: str = "Not available",
+    center_as_of: str = "Not available",
 ) -> None:
-    """Render one compact current-evacuation summary."""
+    total_evacuated_families = inside_ec_families + outside_ec_families
+    total_evacuated_individuals = inside_ec_individuals + outside_ec_individuals
 
-    evacuated_families = (
-        inside_ec_families
-        + outside_ec_families
-    )
-    evacuated_individuals = (
-        inside_ec_individuals
-        + outside_ec_individuals
-    )
-
-    def metric(
-        *,
-        label: str,
-        value: int,
-    ) -> str:
-        return f"""
-        <div class="mdrrmo-evacuation-picture__metric">
-          <span>{escape(label)}</span>
-          <strong>{value:,}</strong>
-        </div>
-        """
-
+    # Context status header matching app design
     st.html(
         f"""
-        <section class="mdrrmo-evacuation-picture">
-          <div class="mdrrmo-evacuation-picture__context">
-            <strong>{escape(mode_label)}</strong>
-            <span>
-              Barangay reports as of {escape(barangay_as_of)} &middot;
-              Center reports as of {escape(center_as_of)}
-            </span>
-          </div>
-
-          <div class="mdrrmo-evacuation-picture__overall">
-            <h3>Total Reported Affected Population</h3>
-            <p class="mdrrmo-evacuation-picture__definition">
-              Includes evacuees and affected residents who have not
-              evacuated. Affected does not automatically mean injured,
-              homeless, or staying in an evacuation center.
-            </p>
-            <div class="mdrrmo-evacuation-picture__metrics
-                        mdrrmo-evacuation-picture__metrics--three">
-              {metric(label="Affected Barangays", value=affected_barangays)}
-              {metric(label="Affected Families", value=affected_families)}
-              {metric(label="Affected Individuals", value=affected_individuals)}
-            </div>
-          </div>
-
-          <div class="mdrrmo-evacuation-picture__evacuated">
-            <span>Currently Evacuated</span>
-            <strong>
-              {evacuated_families:,} families &middot;
-              {evacuated_individuals:,} individuals
-            </strong>
-          </div>
-
-          <div class="mdrrmo-evacuation-picture__locations">
-            <article class="mdrrmo-evacuation-picture__location
-                            mdrrmo-evacuation-picture__location--inside">
-              <h3>Inside Evacuation Centers</h3>
-              <div class="mdrrmo-evacuation-picture__metrics
-                          mdrrmo-evacuation-picture__metrics--three">
-                {metric(label="Operational Centers", value=operational_centers)}
-                {metric(label="Families", value=inside_ec_families)}
-                {metric(label="Individuals", value=inside_ec_individuals)}
-              </div>
-            </article>
-
-            <article class="mdrrmo-evacuation-picture__location
-                            mdrrmo-evacuation-picture__location--outside">
-              <h3>Outside Evacuation Centers</h3>
-              <div class="mdrrmo-evacuation-picture__metrics
-                          mdrrmo-evacuation-picture__metrics--two">
-                {metric(label="Families", value=outside_ec_families)}
-                {metric(label="Individuals", value=outside_ec_individuals)}
-              </div>
-            </article>
-          </div>
-
-          <p class="mdrrmo-evacuation-picture__source">
-            Population figures: current barangay reports &middot;
-            Operational-center count: current evacuation-center reports
-          </p>
-        </section>
+        <div class="mdrrmo-evacuation-picture__context" style="margin-bottom: 8px;">
+          <strong>{escape(mode_label)}</strong>
+          <span>
+            Barangay reports as of {escape(barangay_as_of)} &middot;
+            Center reports as of {escape(center_as_of)}
+          </span>
+        </div>
         """
     )
 
+    # Top KPI Container - Total Affected Population
+    st.markdown(f"""
+    <div style="border: 1px solid #DDE3EF; border-radius: 8px; padding: 16px; background-color: #FFFFFF; margin-bottom: 12px;">
+        <div style="font-weight: 600; text-align: center; margin-bottom: 4px; color: #1A2540; font-size: 16px;">Total Reported Affected Population</div>
+        <div style="font-size: 12px; text-align: center; color: #6B7A99; margin-bottom: 12px;">
+          Includes evacuees and affected residents who have not evacuated. Affected does not automatically mean injured, homeless, or staying in an evacuation center.
+        </div>
+        <div style="display: flex; justify-content: space-around; text-align: center;">
+            <div><small style="color: #6B7A99; font-weight: 600;">AFFECTED BARANGAYS</small><div style="font-size: 22px; font-weight: 700; color: #1549A8;">{affected_barangays:,}</div></div>
+            <div><small style="color: #6B7A99; font-weight: 600;">AFFECTED FAMILIES</small><div style="font-size: 22px; font-weight: 700; color: #1549A8;">{affected_families:,}</div></div>
+            <div><small style="color: #6B7A99; font-weight: 600;">AFFECTED INDIVIDUALS</small><div style="font-size: 22px; font-weight: 700; color: #1549A8;">{affected_individuals:,}</div></div>
+        </div>
+        <div style="background-color: #EEF2F8; border-radius: 4px; padding: 6px; text-align: center; margin-top: 12px; font-size: 13px; font-weight: 600; color: #0D2461;">
+            CURRENTLY EVACUATED: {total_evacuated_families:,} families &middot; {total_evacuated_individuals:,} individuals
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
+    # Symmetrical 3-Column Breakdown (Inside EC | Outside EC | Non-Displaced)
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown(f"""
+        <div style="border: 1px solid #DDE3EF; border-top: 3px solid #0F7E4A; border-radius: 6px; padding: 12px; background-color: #FFFFFF; text-align: center; height: 100%;">
+            <div style="font-weight: 600; color: #1A2540; margin-bottom: 8px;">Inside Evacuation Centers</div>
+            <div style="display: flex; justify-content: space-around;">
+                <div><small style="color: #6B7A99;">CENTERS</small><div style="font-weight: 700; font-size: 16px;">{operational_centers:,}</div></div>
+                <div><small style="color: #6B7A99;">FAMILIES</small><div style="font-weight: 700; font-size: 16px;">{inside_ec_families:,}</div></div>
+                <div><small style="color: #6B7A99;">INDIVIDUALS</small><div style="font-weight: 700; font-size: 16px;">{inside_ec_individuals:,}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(f"""
+        <div style="border: 1px solid #DDE3EF; border-top: 3px solid #B45309; border-radius: 6px; padding: 12px; background-color: #FFFFFF; text-align: center; height: 100%;">
+            <div style="font-weight: 600; color: #1A2540; margin-bottom: 8px;">Outside Evacuation Centers</div>
+            <div style="display: flex; justify-content: space-around;">
+                <div><small style="color: #6B7A99;">FAMILIES</small><div style="font-weight: 700; font-size: 16px;">{outside_ec_families:,}</div></div>
+                <div><small style="color: #6B7A99;">INDIVIDUALS</small><div style="font-weight: 700; font-size: 16px;">{outside_ec_individuals:,}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown(f"""
+        <div style="border: 1px solid #DDE3EF; border-top: 3px solid #1549A8; border-radius: 6px; padding: 12px; background-color: #FFFFFF; text-align: center; height: 100%;">
+            <div style="font-weight: 600; color: #1A2540; margin-bottom: 8px;">Non-Displaced (Home-Based)</div>
+            <div style="display: flex; justify-content: space-around;">
+                <div><small style="color: #6B7A99;">FAMILIES</small><div style="font-weight: 700; font-size: 16px;">{non_displaced_families:,}</div></div>
+                <div><small style="color: #6B7A99;">INDIVIDUALS</small><div style="font-weight: 700; font-size: 16px;">{non_displaced_individuals:,}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.html(
+        """
+        <p class="mdrrmo-evacuation-picture__source" style="margin-top: 12px; font-size: 11px; color: #6B7A99; text-align: center;">
+          Population figures: current barangay reports &middot;
+          Operational-center count: current evacuation-center reports
+        </p>
+        """
+    )
 def render_workflow_section(
     *,
     step: int,
