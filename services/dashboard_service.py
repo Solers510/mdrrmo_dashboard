@@ -109,9 +109,22 @@ def _build_summary(*, rows: list[dict[str, Any]], total_barangays: int, usable_s
         "needs_correction": status_counts["Needs Correction"],
         "reports_received": reports_received,
         "total_barangays": total_barangays,
+        "missing_reports": total_barangays - reports_received,
         "coverage_percent": coverage_percent,
         "latest_update": latest_update,
         "oldest_current_update": oldest_current_update,
+        "displaced_families": sum(
+            int(row.get("inside_ec_families", 0)) + int(row.get("outside_ec_families", 0)) for row in rows),
+        "displaced_individuals": sum(
+            int(row.get("inside_ec_individuals", 0)) + int(row.get("outside_ec_individuals", 0)) for row in rows),
+        "validated_reports": status_counts.get("Validated", 0),
+        "barangay_counts": len(rows),
+        "inside_ec_barangays": sum(1 for row in rows if int(row.get("inside_ec_individuals", 0)) > 0),
+        "outside_ec_barangays": sum(1 for row in rows if int(row.get("outside_ec_individuals", 0)) > 0),
+        "affected_not_displaced_families": sum(max(0, int(row.get("affected_families", 0)) - (
+                    int(row.get("inside_ec_families", 0)) + int(row.get("outside_ec_families", 0)))) for row in rows),
+        "affected_not_displaced_individuals": sum(max(0, int(row.get("affected_individuals", 0)) - (
+                    int(row.get("inside_ec_individuals", 0)) + int(row.get("outside_ec_individuals", 0)))) for row in rows),
     }
 
 
