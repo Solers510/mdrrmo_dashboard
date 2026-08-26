@@ -306,6 +306,25 @@ def create_cross_barangay_allocation(
             center_id=center_id,
         )
 
+        selected_rows = [
+            row
+            for row in current
+            if int(row["origin_barangay_id"]) == origin_barangay_id
+        ]
+        if (
+            families == 0
+            and individuals == 0
+            and not any(
+                int(row["families"]) > 0
+                or int(row["individuals"]) > 0
+                for row in selected_rows
+            )
+        ):
+            raise CrossBarangayValidationError(
+                "No active cross-barangay allocation exists for the selected "
+                "origin. Enter evacuee figures to create an allocation."
+            )
+
         other_rows = [
             row
             for row in current

@@ -44,3 +44,5 @@ deployment/offsite_backup_receipt.json
 
 # Machine-specific performance benchmark results
 performance_results/
+
+secrets.cloud.toml

@@ -18,6 +18,7 @@ from database.repositories import (
     fetch_barangay_by_id,
     fetch_evacuation_center_by_id,
     fetch_evacuation_center_by_name_barangay,
+    fetch_latest_evacuation_update_for_center,
     fetch_evacuation_update_by_submission_key,
     fetch_needs_correction_evacuation_updates,
     fetch_recent_evacuation_center_updates,
@@ -446,6 +447,41 @@ def get_pending_evacuation_correction(
 
         return _evacuation_correction_snapshot(reports[0])
 
+
+def get_latest_evacuation_update(
+    *,
+    center_id: int,
+) -> dict[str, object] | None:
+    if center_id <= 0:
+        raise EvacuationValidationError(
+            "A valid evacuation center is required."
+        )
+
+    with SessionLocal() as session:
+        active_events = fetch_active_event_rows(session)
+
+        if len(active_events) > 1:
+            raise EvacuationDataIntegrityError(
+                "More than one active disaster event exists."
+            )
+
+        if not active_events:
+            raise NoActiveEventError(
+                "Create an active disaster event first."
+            )
+
+        report = fetch_latest_evacuation_update_for_center(
+            session,
+            event_id=int(active_events[0]["id"]),
+            center_id=center_id,
+            included_statuses=(
+                "Submitted",
+                "For Validation",
+                "Validated",
+                "Needs Correction",
+            ),
+        )
+        return dict(report) if report is not None else None
 
 
 def get_recent_evacuation_updates(

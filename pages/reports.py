@@ -179,6 +179,25 @@ render_kpi_grid(
     ]
 )
 
+if active_event is not None and latest_snapshot is not None:
+    active_sitrep_number = str(
+        active_event["current_sitrep_number"] or ""
+    ).strip()
+    latest_snapshot_sitrep = str(
+        latest_snapshot["sitrep_number"] or ""
+    ).strip()
+    if (
+        active_sitrep_number
+        and latest_snapshot_sitrep
+        and latest_snapshot_sitrep != active_sitrep_number
+    ):
+        st.warning(
+            f"Latest saved snapshot #{int(latest_snapshot['id'])} uses "
+            f"{latest_snapshot_sitrep}, while the active event is now "
+            f"{active_sitrep_number}. Create a new snapshot before "
+            "exporting current figures."
+        )
+
 create_tab, archive_tab, export_tab = st.tabs(
     (
         "Create Snapshot",
