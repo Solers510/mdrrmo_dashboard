@@ -1,4 +1,4 @@
-﻿# Environment variables and credentials
+# Environment variables and credentials
 .env
 .streamlit/secrets.toml
 
@@ -34,4 +34,15 @@ backups/*
 Thumbs.db
 Desktop.ini
 
-.streamlit/secrets.toml
+
+# Temporary development artifacts
+app.py.phase*-backup-*
+finish_phase*.ps1
+# Production host/runtime details
+deployment/production_environment.toml
+deployment/offsite_backup_receipt.json
+
+# Machine-specific performance benchmark results
+performance_results/
+
+secrets.cloud.toml

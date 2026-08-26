@@ -15,6 +15,8 @@ sys.path.insert(
     str(PROJECT_ROOT),
 )
 
+from config.runtime import normalize_database_url  # noqa: E402
+
 load_dotenv(
     PROJECT_ROOT / ".env"
 )
@@ -33,7 +35,7 @@ if not database_url:
 
 config.set_main_option(
     "sqlalchemy.url",
-    database_url.replace("%", "%%"),
+    normalize_database_url(database_url).replace("%", "%%"),
 )
 
 

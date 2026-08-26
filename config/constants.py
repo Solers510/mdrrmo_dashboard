@@ -19,6 +19,15 @@ HAZARD_TYPES = (
 )
 
 
+TROPICAL_CYCLONE_CLASSIFICATIONS = (
+    "Tropical Depression",
+    "Tropical Storm",
+    "Severe Tropical Storm",
+    "Typhoon",
+    "Super Typhoon",
+)
+
+
 EOC_STATUSES = (
     "Monitoring",
     "Partially Activated",
@@ -71,6 +80,8 @@ UTILITY_STATUSES = (
     "Partial",
     "Interrupted",
 )
+
+
 EVACUATION_CENTER_STATUSES = (
     "Standby",
     "Open",

@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 
 from config.access_control import (
     PERMISSION_MANAGE_EVENTS,
@@ -18,54 +18,77 @@ from utils.auth import (
     login_screen,
     render_account_sidebar,
 )
+from utils.ui import (
+    load_design_system,
+    render_sidebar_brand,
+)
 
 
 st.set_page_config(
-    page_title="MDRRMO Naic Dashboard",
+    page_title="OMDRRMO Naic Operations",
     layout="wide",
 )
+
+load_design_system()
 
 
 if not getattr(st.user, "is_logged_in", False):
     login_screen()
 
 
-current_user = get_current_app_user()
+current_user = get_current_app_user(
+    refresh_authorization=True
+)
+
+render_sidebar_brand()
 render_account_sidebar(current_user)
 
 
 dashboard_page = st.Page(
     "pages/dashboard.py",
     title="Dashboard",
+    icon=":material/dashboard:",
     default=True,
 )
 event_control_page = st.Page(
     "pages/event_control.py",
     title="Event Control",
+    icon=":material/event:",
 )
 barangay_updates_page = st.Page(
     "pages/barangay_updates.py",
     title="Barangay Updates",
+    icon=":material/edit_note:",
 )
 validation_page = st.Page(
     "pages/validation.py",
     title="Report Validation",
+    icon=":material/fact_check:",
 )
 evacuation_centers_page = st.Page(
     "pages/evacuation_centers.py",
     title="Evacuation Centers",
+    icon=":material/apartment:",
 )
 incidents_page = st.Page(
     "pages/incidents.py",
     title="Incidents",
+    icon=":material/emergency:",
 )
 reports_page = st.Page(
     "pages/reports.py",
     title="Reports",
+    icon=":material/description:",
 )
 user_admin_page = st.Page(
     "pages/user_admin.py",
     title="User Administration",
+    icon=":material/manage_accounts:",
+)
+system_admin_page = st.Page(
+    "pages/system_admin.py",
+    title="System Health & Audit",
+    icon=":material/monitoring:",
 )
 
 
@@ -109,7 +132,7 @@ if has_permission(current_user, PERMISSION_VIEW_REPORTS):
     navigation_sections["Reporting"] = [reports_page]
 
 if has_permission(current_user, PERMISSION_MANAGE_USERS):
-    navigation_sections["Administration"] = [user_admin_page]
+    navigation_sections["Administration"] = [user_admin_page, system_admin_page]
 
 if not navigation_sections:
     st.error("Your role has no assigned application pages.")

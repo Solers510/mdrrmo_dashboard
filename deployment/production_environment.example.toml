@@ -1,0 +1,11 @@
+# Copy to deployment/production_environment.toml.
+# The real file is ignored by Git. Do not put passwords or OAuth secrets here.
+
+deployment_mode = "on_prem_windows"
+public_base_url = "https://REPLACE_WITH_PRODUCTION_HOSTNAME"
+streamlit_address = "127.0.0.1"
+streamlit_port = 8501
+reverse_proxy = "REPLACE_WITH_APPROVED_PROXY"
+expected_oidc_callback = "https://REPLACE_WITH_PRODUCTION_HOSTNAME/oauth2callback"
+off_machine_backup_destination = "\\REPLACE_SERVER\REPLACE_SHARE\MDRRMO_Backups"
+production_host_label = "REPLACE_WITH_SERVER_OR_VM_NAME"

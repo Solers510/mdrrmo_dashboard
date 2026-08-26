@@ -1,12 +1,31 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
+from sqlalchemy.exc import IntegrityError
+
+from config.access_control import (
+    PERMISSION_MANAGE_EVENTS,
+    ROLE_ADMINISTRATOR,
+    permissions_for_role,
+)
+from config.constants import (
+    EOC_STATUSES,
+    TROPICAL_CYCLONE_CLASSIFICATIONS,
+)
 from database.connection import SessionLocal, session_scope
-from database.models import AlertLevelHistory, DisasterEvent
+from database.models import AlertLevelHistory, DisasterEvent, EventChangeHistory
 from database.repositories import (
     fetch_active_event_rows,
     fetch_alert_level_by_code,
     fetch_alert_levels,
+    fetch_app_user_by_id,
+    fetch_event_by_id,
+    fetch_event_change_history,
+    fetch_recent_events,
 )
+
+
+MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 
 
 class EventServiceError(Exception):
@@ -17,6 +36,10 @@ class EventValidationError(EventServiceError):
     """Raised when submitted event information is invalid."""
 
 
+class EventAuthorizationError(EventServiceError):
+    """Raised when the authenticated account cannot manage events."""
+
+
 class ActiveEventAlreadyExistsError(EventServiceError):
     """Raised when an active event already exists."""
 
@@ -25,42 +48,164 @@ class EventDataIntegrityError(EventServiceError):
     """Raised when inconsistent event data is detected."""
 
 
-def list_alert_levels() -> list[dict[str, object]]:
-    """
-    Return alert levels that can be displayed in the form.
-    """
-    with SessionLocal() as session:
-        rows = fetch_alert_levels(session)
+class EventStateError(EventServiceError):
+    """Raised when an event transition is not allowed."""
 
-        return [
-            dict(row)
-            for row in rows
-        ]
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _validate_aware_datetime(value: datetime, label: str) -> None:
+    if value.tzinfo is None:
+        raise EventValidationError(
+            f"{label} must include the application timezone."
+        )
+
+
+def _validate_classification(
+    *,
+    hazard_type: str,
+    classification: str | None,
+) -> str | None:
+    cleaned = _clean_optional(classification)
+
+    if hazard_type == "Tropical Cyclone":
+        if cleaned not in TROPICAL_CYCLONE_CLASSIFICATIONS:
+            raise EventValidationError(
+                "Select a valid tropical-cyclone classification."
+            )
+        return cleaned
+
+    return None
+
+
+def _validate_event_name(
+    *,
+    event_name: str,
+    hazard_type: str,
+) -> None:
+    if hazard_type != "Tropical Cyclone":
+        return
+
+    normalized_name = event_name.casefold()
+
+    for classification in TROPICAL_CYCLONE_CLASSIFICATIONS:
+        prefix = classification.casefold() + " "
+
+        if normalized_name.startswith(prefix):
+            raise EventValidationError(
+                "For a tropical cyclone, enter the event name only "
+                "(for example: Luis). Select Tropical Depression, "
+                "Tropical Storm, Typhoon, and other classifications "
+                "in the separate classification field."
+            )
+
+
+def _require_manager(
+    session,
+    *,
+    user_id: int,
+    administrator_only: bool = False,
+):
+    user = fetch_app_user_by_id(session, user_id=user_id)
+    if user is None or not user.is_active:
+        raise EventAuthorizationError(
+            "Your application account is not active."
+        )
+
+    if PERMISSION_MANAGE_EVENTS not in permissions_for_role(user.role):
+        raise EventAuthorizationError(
+            "Your account is not authorized to manage disaster events."
+        )
+
+    if administrator_only and user.role != ROLE_ADMINISTRATOR:
+        raise EventAuthorizationError(
+            "Only an Administrator may reopen a closed event."
+        )
+
+    return user
+
+
+def _actor_snapshot(user) -> str:
+    return f"{user.display_name} — {user.role}"
+
+
+def _add_history(
+    session,
+    *,
+    event_id: int,
+    change_type: str,
+    field_name: str,
+    previous_value: object | None,
+    new_value: object | None,
+    reason: str,
+    authority_reference: str | None,
+    actor,
+    effective_at: datetime,
+) -> None:
+    session.add(
+        EventChangeHistory(
+            event_id=event_id,
+            change_type=change_type,
+            field_name=field_name,
+            previous_value=(
+                None if previous_value is None else str(previous_value)
+            ),
+            new_value=None if new_value is None else str(new_value),
+            reason=reason,
+            authority_reference=_clean_optional(authority_reference),
+            changed_by_user_id=actor.id,
+            changed_by=_actor_snapshot(actor),
+            effective_at=effective_at,
+        )
+    )
+
+
+def list_alert_levels() -> list[dict[str, object]]:
+    with SessionLocal() as session:
+        return [dict(row) for row in fetch_alert_levels(session)]
 
 
 def get_active_event_summary() -> dict[str, object] | None:
-    """
-    Return the current active event, or None when there is none.
-    """
     with SessionLocal() as session:
         rows = fetch_active_event_rows(session)
-
         if len(rows) > 1:
             raise EventDataIntegrityError(
-                "More than one active disaster event exists. "
-                "Correct the database before continuing."
+                "More than one active disaster event exists."
             )
+        return dict(rows[0]) if rows else None
 
-        if not rows:
-            return None
 
-        return dict(rows[0])
+def list_recent_events(*, limit: int = 20) -> list[dict[str, object]]:
+    with SessionLocal() as session:
+        return [dict(row) for row in fetch_recent_events(session, limit=limit)]
+
+
+def get_event_history(
+    *,
+    event_id: int,
+    limit: int = 100,
+) -> list[dict[str, object]]:
+    with SessionLocal() as session:
+        return [
+            dict(row)
+            for row in fetch_event_change_history(
+                session,
+                event_id=event_id,
+                limit=limit,
+            )
+        ]
 
 
 def create_event(
     *,
     event_name: str,
     hazard_type: str,
+    classification: str | None,
     alert_code: str,
     eoc_status: str,
     started_at: datetime,
@@ -69,117 +214,488 @@ def create_event(
     situation_overview: str | None,
     initial_alert_reason: str,
     authority_reference: str | None,
+    actor_user_id: int,
 ) -> int:
-    """
-    Create one active disaster event and its initial
-    alert-level history record.
+    cleaned_name = event_name.strip()
+    cleaned_hazard = hazard_type.strip()
+    cleaned_alert = alert_code.strip().upper()
+    cleaned_eoc = eoc_status.strip()
+    cleaned_reason = initial_alert_reason.strip()
 
-    Returns the new event ID.
-    """
-    cleaned_event_name = event_name.strip()
-    cleaned_hazard_type = hazard_type.strip()
-    cleaned_alert_code = alert_code.strip().upper()
-    cleaned_eoc_status = eoc_status.strip()
-    cleaned_alert_reason = initial_alert_reason.strip()
-
-    if not cleaned_event_name:
-        raise EventValidationError(
-            "Event name is required."
-        )
-
-    if not cleaned_hazard_type:
-        raise EventValidationError(
-            "Hazard type is required."
-        )
-
-    if not cleaned_alert_code:
-        raise EventValidationError(
-            "Alert level is required."
-        )
-
-    if not cleaned_eoc_status:
-        raise EventValidationError(
-            "EOC status is required."
-        )
-
-    if not cleaned_alert_reason:
+    if not cleaned_name:
+        raise EventValidationError("Event name is required.")
+    if not cleaned_hazard:
+        raise EventValidationError("Hazard type is required.")
+    if cleaned_eoc not in EOC_STATUSES:
+        raise EventValidationError("Select a valid EOC status.")
+    if not cleaned_reason:
         raise EventValidationError(
             "Reason for the initial alert level is required."
         )
 
-    if started_at.tzinfo is None:
-        raise EventValidationError(
-            "The event start date and time must include "
-            "the application timezone."
-        )
+    _validate_event_name(
+        event_name=cleaned_name,
+        hazard_type=cleaned_hazard,
+    )
+
+    _validate_aware_datetime(started_at, "Event start date and time")
+    cleaned_classification = _validate_classification(
+        hazard_type=cleaned_hazard,
+        classification=classification,
+    )
+
+    try:
+        with session_scope() as session:
+            actor = _require_manager(session, user_id=actor_user_id)
+
+            if fetch_active_event_rows(session):
+                raise ActiveEventAlreadyExistsError(
+                    "An active disaster event already exists. Close it before "
+                    "creating another event."
+                )
+
+            alert_level = fetch_alert_level_by_code(session, cleaned_alert)
+            if alert_level is None:
+                raise EventValidationError(
+                    f"Alert level '{cleaned_alert}' does not exist."
+                )
+
+            event = DisasterEvent(
+                event_name=cleaned_name,
+                hazard_type=cleaned_hazard,
+                classification=cleaned_classification,
+                current_alert_level_id=alert_level.id,
+                eoc_status=cleaned_eoc,
+                current_sitrep_number=_clean_optional(current_sitrep_number),
+                official_reference=_clean_optional(official_reference),
+                situation_overview=_clean_optional(situation_overview),
+                started_at=started_at,
+                is_active=True,
+            )
+            session.add(event)
+            session.flush()
+
+            session.add(
+                AlertLevelHistory(
+                    event_id=event.id,
+                    previous_alert_level_id=None,
+                    new_alert_level_id=alert_level.id,
+                    effective_at=started_at,
+                    reason=cleaned_reason,
+                    authority_reference=_clean_optional(authority_reference),
+                    changed_by_user_id=actor.id,
+                    changed_by=_actor_snapshot(actor),
+                )
+            )
+
+            _add_history(
+                session,
+                event_id=event.id,
+                change_type="Created",
+                field_name="event",
+                previous_value=None,
+                new_value=(
+                    f"{cleaned_classification} {cleaned_name}"
+                    if cleaned_classification
+                    else cleaned_name
+                ),
+                reason=cleaned_reason,
+                authority_reference=authority_reference,
+                actor=actor,
+                effective_at=started_at,
+            )
+
+            session.flush()
+            return int(event.id)
+
+    except IntegrityError as error:
+        if "uq_disaster_events_one_active" in str(error.orig):
+            raise ActiveEventAlreadyExistsError(
+                "Another active event already exists."
+            ) from error
+        raise
+
+
+def update_event_details(
+    *,
+    event_id: int,
+    event_name: str,
+    classification: str | None,
+    current_sitrep_number: str | None,
+    official_reference: str | None,
+    situation_overview: str | None,
+    reason: str,
+    authority_reference: str | None,
+    actor_user_id: int,
+) -> None:
+    cleaned_name = event_name.strip()
+    cleaned_reason = reason.strip()
+
+    if not cleaned_name:
+        raise EventValidationError("Event name is required.")
+    if not cleaned_reason:
+        raise EventValidationError("Reason for the change is required.")
+
+    now = datetime.now(MANILA_TIMEZONE)
 
     with session_scope() as session:
-        active_events = fetch_active_event_rows(session)
-
-        if active_events:
-            raise ActiveEventAlreadyExistsError(
-                "An active disaster event already exists. "
-                "Close the current event before creating another."
-            )
-
-        alert_level = fetch_alert_level_by_code(
+        actor = _require_manager(session, user_id=actor_user_id)
+        event = fetch_event_by_id(
             session,
-            cleaned_alert_code,
+            event_id=event_id,
+            for_update=True,
         )
 
-        if alert_level is None:
-            raise EventValidationError(
-                f"Alert level '{cleaned_alert_code}' "
-                "does not exist in the database."
+        if event is None:
+            raise EventValidationError("The selected event does not exist.")
+        if not event.is_active:
+            raise EventStateError("Only the active event may be edited.")
+
+        _validate_event_name(
+            event_name=cleaned_name,
+            hazard_type=event.hazard_type,
+        )
+
+        new_classification = _validate_classification(
+            hazard_type=event.hazard_type,
+            classification=classification,
+        )
+
+        new_values = {
+            "event_name": cleaned_name,
+            "classification": new_classification,
+            "current_sitrep_number": _clean_optional(current_sitrep_number),
+            "official_reference": _clean_optional(official_reference),
+            "situation_overview": _clean_optional(situation_overview),
+        }
+
+        changes = []
+        for field_name, new_value in new_values.items():
+            old_value = getattr(event, field_name)
+            if old_value != new_value:
+                changes.append((field_name, old_value, new_value))
+
+        if not changes:
+            raise EventValidationError("No event-detail changes were detected.")
+
+        for field_name, old_value, new_value in changes:
+            setattr(event, field_name, new_value)
+            _add_history(
+                session,
+                event_id=event.id,
+                change_type="Updated",
+                field_name=field_name,
+                previous_value=old_value,
+                new_value=new_value,
+                reason=cleaned_reason,
+                authority_reference=authority_reference,
+                actor=actor,
+                effective_at=now,
             )
 
-        event = DisasterEvent(
-            event_name=cleaned_event_name,
-            hazard_type=cleaned_hazard_type,
-            current_alert_level_id=alert_level.id,
-            eoc_status=cleaned_eoc_status,
-            current_sitrep_number=(
-                current_sitrep_number.strip()
-                if current_sitrep_number
-                and current_sitrep_number.strip()
-                else None
-            ),
-            official_reference=(
-                official_reference.strip()
-                if official_reference
-                and official_reference.strip()
-                else None
-            ),
-            situation_overview=(
-                situation_overview.strip()
-                if situation_overview
-                and situation_overview.strip()
-                else None
-            ),
-            started_at=started_at,
-            is_active=True,
-        )
-
-        session.add(event)
-
-        # Send the INSERT to PostgreSQL so event.id is assigned.
         session.flush()
 
-        history = AlertLevelHistory(
+
+def change_event_alert(
+    *,
+    event_id: int,
+    new_alert_code: str,
+    effective_at: datetime,
+    reason: str,
+    authority_reference: str | None,
+    actor_user_id: int,
+) -> None:
+    cleaned_reason = reason.strip()
+
+    if not cleaned_reason:
+        raise EventValidationError("Reason for the alert change is required.")
+
+    _validate_aware_datetime(
+        effective_at,
+        "Alert effective date and time",
+    )
+
+    with session_scope() as session:
+        actor = _require_manager(session, user_id=actor_user_id)
+        event = fetch_event_by_id(
+            session,
+            event_id=event_id,
+            for_update=True,
+        )
+
+        if event is None or not event.is_active:
+            raise EventStateError("The event is not active.")
+
+        new_level = fetch_alert_level_by_code(
+            session,
+            new_alert_code.strip().upper(),
+        )
+
+        if new_level is None:
+            raise EventValidationError(
+                "The selected alert level is invalid."
+            )
+
+        if int(new_level.id) == int(event.current_alert_level_id):
+            raise EventValidationError(
+                "The selected alert level is already in effect."
+            )
+
+        old_level_id = int(event.current_alert_level_id)
+        old_level = next(
+            (
+                row
+                for row in fetch_alert_levels(session)
+                if int(row["id"]) == old_level_id
+            ),
+            None,
+        )
+        old_code = (
+            str(old_level["code"])
+            if old_level
+            else str(old_level_id)
+        )
+
+        event.current_alert_level_id = new_level.id
+
+        session.add(
+            AlertLevelHistory(
+                event_id=event.id,
+                previous_alert_level_id=old_level_id,
+                new_alert_level_id=new_level.id,
+                effective_at=effective_at,
+                reason=cleaned_reason,
+                authority_reference=_clean_optional(authority_reference),
+                changed_by_user_id=actor.id,
+                changed_by=_actor_snapshot(actor),
+            )
+        )
+
+        _add_history(
+            session,
             event_id=event.id,
-            previous_alert_level_id=None,
-            new_alert_level_id=alert_level.id,
-            effective_at=started_at,
-            reason=cleaned_alert_reason,
-            authority_reference=(
-                authority_reference.strip()
-                if authority_reference
-                and authority_reference.strip()
-                else None
-            ),
+            change_type="Alert Change",
+            field_name="alert_level",
+            previous_value=old_code,
+            new_value=new_level.code,
+            reason=cleaned_reason,
+            authority_reference=authority_reference,
+            actor=actor,
+            effective_at=effective_at,
         )
 
-        session.add(history)
         session.flush()
 
-        return event.id
+
+def change_eoc_status(
+    *,
+    event_id: int,
+    new_status: str,
+    reason: str,
+    authority_reference: str | None,
+    actor_user_id: int,
+) -> None:
+    cleaned_status = new_status.strip()
+    cleaned_reason = reason.strip()
+
+    if cleaned_status not in EOC_STATUSES:
+        raise EventValidationError("Select a valid EOC status.")
+    if not cleaned_reason:
+        raise EventValidationError(
+            "Reason for the EOC change is required."
+        )
+
+    now = datetime.now(MANILA_TIMEZONE)
+
+    with session_scope() as session:
+        actor = _require_manager(session, user_id=actor_user_id)
+        event = fetch_event_by_id(
+            session,
+            event_id=event_id,
+            for_update=True,
+        )
+
+        if event is None or not event.is_active:
+            raise EventStateError("The event is not active.")
+
+        if event.eoc_status == cleaned_status:
+            raise EventValidationError(
+                "The selected EOC status is already in effect."
+            )
+
+        old_status = event.eoc_status
+        event.eoc_status = cleaned_status
+
+        _add_history(
+            session,
+            event_id=event.id,
+            change_type="EOC Change",
+            field_name="eoc_status",
+            previous_value=old_status,
+            new_value=cleaned_status,
+            reason=cleaned_reason,
+            authority_reference=authority_reference,
+            actor=actor,
+            effective_at=now,
+        )
+
+        session.flush()
+
+
+def close_event(
+    *,
+    event_id: int,
+    ended_at: datetime,
+    reason: str,
+    authority_reference: str | None,
+    actor_user_id: int,
+) -> None:
+    cleaned_reason = reason.strip()
+
+    if not cleaned_reason:
+        raise EventValidationError(
+            "Reason for closing the event is required."
+        )
+
+    _validate_aware_datetime(
+        ended_at,
+        "Event end date and time",
+    )
+
+    with session_scope() as session:
+        actor = _require_manager(session, user_id=actor_user_id)
+        event = fetch_event_by_id(
+            session,
+            event_id=event_id,
+            for_update=True,
+        )
+
+        if event is None or not event.is_active:
+            raise EventStateError("The event is not active.")
+
+        if ended_at < event.started_at:
+            raise EventValidationError(
+                "Event end time cannot be earlier than its start time."
+            )
+
+        if event.eoc_status != "Stand Down":
+            old_status = event.eoc_status
+            event.eoc_status = "Stand Down"
+
+            _add_history(
+                session,
+                event_id=event.id,
+                change_type="EOC Change",
+                field_name="eoc_status",
+                previous_value=old_status,
+                new_value="Stand Down",
+                reason=cleaned_reason,
+                authority_reference=authority_reference,
+                actor=actor,
+                effective_at=ended_at,
+            )
+
+        event.ended_at = ended_at
+        event.is_active = False
+
+        _add_history(
+            session,
+            event_id=event.id,
+            change_type="Closed",
+            field_name="lifecycle",
+            previous_value="Active",
+            new_value="Closed",
+            reason=cleaned_reason,
+            authority_reference=authority_reference,
+            actor=actor,
+            effective_at=ended_at,
+        )
+
+        session.flush()
+
+
+def reopen_event(
+    *,
+    event_id: int,
+    reason: str,
+    authority_reference: str | None,
+    actor_user_id: int,
+) -> None:
+    cleaned_reason = reason.strip()
+
+    if not cleaned_reason:
+        raise EventValidationError(
+            "Reason for reopening the event is required."
+        )
+
+    now = datetime.now(MANILA_TIMEZONE)
+
+    try:
+        with session_scope() as session:
+            actor = _require_manager(
+                session,
+                user_id=actor_user_id,
+                administrator_only=True,
+            )
+
+            if fetch_active_event_rows(session):
+                raise ActiveEventAlreadyExistsError(
+                    "Close the current active event before reopening another."
+                )
+
+            event = fetch_event_by_id(
+                session,
+                event_id=event_id,
+                for_update=True,
+            )
+
+            if event is None:
+                raise EventValidationError(
+                    "The selected event does not exist."
+                )
+
+            if event.is_active:
+                raise EventStateError(
+                    "The selected event is already active."
+                )
+
+            old_eoc = event.eoc_status
+            event.is_active = True
+            event.ended_at = None
+            event.eoc_status = "Monitoring"
+
+            _add_history(
+                session,
+                event_id=event.id,
+                change_type="Reopened",
+                field_name="lifecycle",
+                previous_value="Closed",
+                new_value="Active",
+                reason=cleaned_reason,
+                authority_reference=authority_reference,
+                actor=actor,
+                effective_at=now,
+            )
+
+            if old_eoc != "Monitoring":
+                _add_history(
+                    session,
+                    event_id=event.id,
+                    change_type="EOC Change",
+                    field_name="eoc_status",
+                    previous_value=old_eoc,
+                    new_value="Monitoring",
+                    reason=cleaned_reason,
+                    authority_reference=authority_reference,
+                    actor=actor,
+                    effective_at=now,
+                )
+
+            session.flush()
+
+    except IntegrityError as error:
+        if "uq_disaster_events_one_active" in str(error.orig):
+            raise ActiveEventAlreadyExistsError(
+                "Another event became active before this event could reopen."
+            ) from error
+        raise

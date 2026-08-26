@@ -7,6 +7,7 @@ from database.connection import (
     session_scope,
 )
 from database.models import AppUser
+from services.audit_context import set_audit_actor
 from database.repositories import (
     fetch_all_app_users,
     fetch_app_user_by_email,
@@ -105,9 +106,14 @@ def _require_administrator(
             "Administrator permission is required."
         )
 
+    set_audit_actor(
+        session,
+        user_id=int(actor.id),
+        display_name=str(actor.display_name),
+        role=str(actor.role),
+    )
+
     return actor
-
-
 def list_app_users() -> list[dict[str, object]]:
     """
     Return all authorized application accounts.

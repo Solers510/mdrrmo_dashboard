@@ -1,0 +1,36 @@
+{
+  "alembic_revision": "f5a8d3c74211",
+  "backup": {
+    "archive_verified": true,
+    "filename": "mdrrmo_dashboard_20260810-150228.backup",
+    "sha256": "a25afb80fcddc9ef5f3f5577546b49e917d57903f73e3e26c917b8fb3a869370"
+  },
+  "fresh_database_drill": {
+    "alembic_revision": "f5a8d3c74211",
+    "application_role": "mdrrmo_app",
+    "application_role_migration": true,
+    "maintenance_role": "mdrrmo_restore_maintenance",
+    "status": "PASS",
+    "table_count": 17,
+    "temporary_database": "mdrrmo_migration_test_20260810_150230_298291",
+    "trigger_count": 16
+  },
+  "restore_drill": {
+    "alembic_revision": "f5a8d3c74211",
+    "application_role": "mdrrmo_app",
+    "application_role_restore": true,
+    "backup_filename": "mdrrmo_dashboard_20260810-150228.backup",
+    "backup_sha256": "a25afb80fcddc9ef5f3f5577546b49e917d57903f73e3e26c917b8fb3a869370",
+    "backup_size_bytes": 108268,
+    "maintenance_role": "mdrrmo_restore_maintenance",
+    "row_counts_matched": true,
+    "status": "PASS",
+    "table_count": 17,
+    "temporary_database": "mdrrmo_restore_test_20260810_150229_374079",
+    "trigger_count": 16
+  },
+  "source_database": "mdrrmo_dashboard",
+  "status": "PASS",
+  "temporary_databases_removed": true,
+  "validated_at": "2026-08-10T15:02:31.872331+08:00"
+}
