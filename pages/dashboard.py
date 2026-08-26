@@ -325,14 +325,18 @@ def render_overview_section(
     render_dashboard_section_header(title="Current Evacuation Summary",
                                     subtitle="Affected population and current evacuation figures for the selected data mode.")
     render_current_evacuation_picture_func(
-        affected_barangays=int(summary["affected_barangays"]), affected_families=int(summary["affected_families"]),
+        affected_barangays=int(summary["affected_barangays"]),
+        affected_families=int(summary["affected_families"]),
         affected_individuals=int(summary["affected_individuals"]),
         operational_centers=int(evacuation_summary["open_centers"]),
         inside_ec_families=int(summary["inside_ec_families"]),
         inside_ec_individuals=int(summary["inside_ec_individuals"]),
         outside_ec_families=int(summary["outside_ec_families"]),
         outside_ec_individuals=int(summary["outside_ec_individuals"]),
-        mode_label=view_mode, barangay_as_of=format_datetime(summary["latest_update"]),
+        non_displaced_families=int(summary.get("affected_not_displaced_families", 0)),
+        non_displaced_individuals=int(summary.get("affected_not_displaced_individuals", 0)),
+        mode_label=view_mode,
+        barangay_as_of=format_datetime(summary["latest_update"]),
         center_as_of=format_datetime(evacuation_summary["latest_update"]),
     )
 
