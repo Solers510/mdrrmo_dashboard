@@ -180,11 +180,8 @@ def get_active_event_summary() -> dict[str, object] | None:
             return None
 
         row_dict = dict(rows[0])
-        # IMPORTANT: Extract the string value from the Enum objects before returning to UI
         if "hazard_category" in row_dict and hasattr(row_dict["hazard_category"], "value"):
             row_dict["hazard_category"] = row_dict["hazard_category"].value
-        if "alert_level" in row_dict and hasattr(row_dict["alert_level"], "value"):
-            row_dict["alert_level"] = row_dict["alert_level"].value
         if "eoc_status" in row_dict and hasattr(row_dict["eoc_status"], "value"):
             row_dict["eoc_status"] = row_dict["eoc_status"].value
 
@@ -196,11 +193,8 @@ def list_recent_events(*, limit: int = 20) -> list[dict[str, object]]:
         events = []
         for row in fetch_recent_events(session, limit=limit):
             row_dict = dict(row)
-            # Unpack Enum objects
             if "hazard_category" in row_dict and hasattr(row_dict["hazard_category"], "value"):
                 row_dict["hazard_category"] = row_dict["hazard_category"].value
-            if "alert_level" in row_dict and hasattr(row_dict["alert_level"], "value"):
-                row_dict["alert_level"] = row_dict["alert_level"].value
             if "eoc_status" in row_dict and hasattr(row_dict["eoc_status"], "value"):
                 row_dict["eoc_status"] = row_dict["eoc_status"].value
             events.append(row_dict)
@@ -258,7 +252,6 @@ def create_event(
             "Reason for the initial alert level is required."
         )
 
-    # Validate strict DRRM Enum mappings
     try:
         mapped_category = HazardCategory(cleaned_category)
     except ValueError:
@@ -308,7 +301,6 @@ def create_event(
                 classification=cleaned_classification,
                 listo_cpa_level=_clean_optional(listo_cpa_level),
                 current_alert_level_id=alert_level.id,
-                alert_level=mapped_alert,
                 eoc_status=mapped_eoc,
                 current_sitrep_number=_clean_optional(current_sitrep_number),
                 official_reference=_clean_optional(official_reference),
@@ -506,7 +498,6 @@ def change_event_alert(
         )
 
         event.current_alert_level_id = new_level.id
-        event.alert_level = mapped_alert
 
         session.add(
             AlertLevelHistory(

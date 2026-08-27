@@ -26,7 +26,10 @@ class HazardCategory(enum.Enum):
     GEOLOGICAL = "Geological Hazard"
     BIOLOGICAL = "Biological Hazard"
     HUMAN_INDUCED = "Human-Induced Incident"
-
+class EOCAlertLevel(enum.Enum):
+    WHITE = "WHITE ALERT"
+    BLUE = "BLUE ALERT"
+    RED = "RED ALERT"
 class EOCStatus(enum.Enum):
     MONITORING = "Monitoring"
     STANDBY = "Standby"
