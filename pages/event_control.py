@@ -65,7 +65,7 @@ def render_no_active_event_tabs(recent_events: list[dict[str, Any]], now: dateti
             hm_col1, hm_col2 = st.columns(2)
             with hm_col1:
                 classification = st.selectbox("Classification",
-                                              options=["Not Applicable"] + TROPICAL_CYCLONE_CLASSIFICATIONS,
+                                              options=["Not Applicable"] + list(TROPICAL_CYCLONE_CLASSIFICATIONS),
                                               key="new_event_classification")
             with hm_col2:
                 listo_cpa_level = st.selectbox("Operation L!STO CPA", options=LISTO_LEVELS, key="new_event_listo")
