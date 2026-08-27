@@ -305,7 +305,8 @@ if active_event is None:
 
 render_event_control_strip(
     event_name=display_event_name(active_event), hazard_type=str(active_event["hazard_type"]),
-    classification=str(active_event.get("classification") or "Not applicable"),
+    classification = st.selectbox("Classification",
+    options=["Not Applicable"] + list(TROPICAL_CYCLONE_CLASSIFICATIONS), key="new_event_classification"),
     alert_code=str(active_event["alert_level"]), eoc_status=str(active_event["eoc_status"]),
     sitrep=str(active_event["current_sitrep_number"] or "Not provided"),
     started_at=format_datetime(active_event["started_at"]),
