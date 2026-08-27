@@ -1,3 +1,4 @@
+import enum
 from datetime import datetime
 from decimal import Decimal
 
@@ -5,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Enum,  # <--- Add Enum here
     ForeignKey,
     Index,
     Integer,
@@ -18,6 +20,17 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+# --- STRICT PHILIPPINE DRRM TAXONOMIES ---
+class HazardCategory(enum.Enum):
+    HYDROMETEOROLOGICAL = "Hydrometeorological Hazard"
+    GEOLOGICAL = "Geological Hazard"
+    BIOLOGICAL = "Biological Hazard"
+    HUMAN_INDUCED = "Human-Induced Incident"
+
+class EOCStatus(enum.Enum):
+    MONITORING = "Monitoring"
+    STANDBY = "Standby"
+    ACTIVE = "Active (Full Mobilization)"
 
 class Base(DeclarativeBase):
     pass
@@ -75,29 +88,8 @@ class DisasterEvent(Base):
     __tablename__ = "disaster_events"
 
     __table_args__ = (
-        CheckConstraint(
-            """
-            eoc_status IN (
-                'Monitoring',
-                'Partially Activated',
-                'Activated',
-                'Stand Down'
-            )
-            """,
-            name="ck_disaster_events_eoc_status",
-        ),
-        CheckConstraint(
-            """
-            classification IS NULL OR classification IN (
-                'Tropical Depression',
-                'Tropical Storm',
-                'Severe Tropical Storm',
-                'Typhoon',
-                'Super Typhoon'
-            )
-            """,
-            name="ck_disaster_events_classification",
-        ),
+        # Note: We removed the old check constraints for eoc_status and
+        # classification because the strict Enums now handle validation.
         Index(
             "uq_disaster_events_one_active",
             "is_active",
@@ -106,85 +98,55 @@ class DisasterEvent(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(
-        Integer,
-        primary_key=True,
-    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    event_name: Mapped[str] = mapped_column(
-        String(150),
+    event_name: Mapped[str] = mapped_column(String(150), nullable=False)
+
+    # NEW: Strict hazard categorization
+    hazard_category: Mapped[HazardCategory] = mapped_column(
+        Enum(HazardCategory, name="hazard_category_enum", create_type=True),
         nullable=False,
+        default=HazardCategory.HYDROMETEOROLOGICAL,
     )
 
-    hazard_type: Mapped[str] = mapped_column(
-        String(50),
-        nullable=False,
-    )
+    # UPDATED: The specific hazard (e.g., "Tropical Cyclone", "Earthquake")
+    hazard_type: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    classification: Mapped[str | None] = mapped_column(
-        String(50),
-        nullable=True,
-    )
+    # UPDATED: Specific classification/magnitude (e.g., "Super Typhoon")
+    classification: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # NEW: DILG Operation L!STO tracking (Alpha, Bravo, Charlie)
+    listo_cpa_level: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # Kept as Foreign Key to preserve AlertLevelHistory tracking
     current_alert_level_id: Mapped[int] = mapped_column(
-        ForeignKey(
-            "alert_levels.id",
-            ondelete="RESTRICT",
-        ),
+        ForeignKey("alert_levels.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
 
-    eoc_status: Mapped[str] = mapped_column(
-        String(30),
+    # UPDATED: Strict EOC Status Enum
+    eoc_status: Mapped[EOCStatus] = mapped_column(
+        Enum(EOCStatus, name="eoc_status_enum", create_type=True),
         nullable=False,
-        default="Monitoring",
-        server_default="Monitoring",
+        default=EOCStatus.MONITORING,
     )
 
-    current_sitrep_number: Mapped[str | None] = mapped_column(
-        String(30),
-        nullable=True,
-    )
+    current_sitrep_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    official_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    situation_overview: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    official_reference: Mapped[str | None] = mapped_column(
-        String(255),
-        nullable=True,
-    )
-
-    situation_overview: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
-
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-    )
-
-    ended_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=True,
-        server_default="true",
+        Boolean, nullable=False, default=True, server_default="true"
     )
-
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 

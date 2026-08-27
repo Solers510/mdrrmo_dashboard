@@ -9,11 +9,11 @@ from config.access_control import (
     permissions_for_role,
 )
 from config.constants import (
-    EOC_STATUSES,
     TROPICAL_CYCLONE_CLASSIFICATIONS,
 )
 from database.connection import SessionLocal, session_scope
-from database.models import AlertLevelHistory, DisasterEvent, EventChangeHistory
+from database.models import AlertLevelHistory, DisasterEvent, EventChangeHistory, HazardCategory, EOCAlertLevel, \
+    EOCStatus
 from database.repositories import (
     fetch_active_event_rows,
     fetch_alert_level_by_code,
@@ -23,7 +23,6 @@ from database.repositories import (
     fetch_event_change_history,
     fetch_recent_events,
 )
-
 
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 
@@ -67,9 +66,9 @@ def _validate_aware_datetime(value: datetime, label: str) -> None:
 
 
 def _validate_classification(
-    *,
-    hazard_type: str,
-    classification: str | None,
+        *,
+        hazard_type: str,
+        classification: str | None,
 ) -> str | None:
     cleaned = _clean_optional(classification)
 
@@ -84,9 +83,9 @@ def _validate_classification(
 
 
 def _validate_event_name(
-    *,
-    event_name: str,
-    hazard_type: str,
+        *,
+        event_name: str,
+        hazard_type: str,
 ) -> None:
     if hazard_type != "Tropical Cyclone":
         return
@@ -106,10 +105,10 @@ def _validate_event_name(
 
 
 def _require_manager(
-    session,
-    *,
-    user_id: int,
-    administrator_only: bool = False,
+        session,
+        *,
+        user_id: int,
+        administrator_only: bool = False,
 ):
     user = fetch_app_user_by_id(session, user_id=user_id)
     if user is None or not user.is_active:
@@ -135,17 +134,17 @@ def _actor_snapshot(user) -> str:
 
 
 def _add_history(
-    session,
-    *,
-    event_id: int,
-    change_type: str,
-    field_name: str,
-    previous_value: object | None,
-    new_value: object | None,
-    reason: str,
-    authority_reference: str | None,
-    actor,
-    effective_at: datetime,
+        session,
+        *,
+        event_id: int,
+        change_type: str,
+        field_name: str,
+        previous_value: object | None,
+        new_value: object | None,
+        reason: str,
+        authority_reference: str | None,
+        actor,
+        effective_at: datetime,
 ) -> None:
     session.add(
         EventChangeHistory(
@@ -177,18 +176,41 @@ def get_active_event_summary() -> dict[str, object] | None:
             raise EventDataIntegrityError(
                 "More than one active disaster event exists."
             )
-        return dict(rows[0]) if rows else None
+        if not rows:
+            return None
+
+        row_dict = dict(rows[0])
+        # IMPORTANT: Extract the string value from the Enum objects before returning to UI
+        if "hazard_category" in row_dict and hasattr(row_dict["hazard_category"], "value"):
+            row_dict["hazard_category"] = row_dict["hazard_category"].value
+        if "alert_level" in row_dict and hasattr(row_dict["alert_level"], "value"):
+            row_dict["alert_level"] = row_dict["alert_level"].value
+        if "eoc_status" in row_dict and hasattr(row_dict["eoc_status"], "value"):
+            row_dict["eoc_status"] = row_dict["eoc_status"].value
+
+        return row_dict
 
 
 def list_recent_events(*, limit: int = 20) -> list[dict[str, object]]:
     with SessionLocal() as session:
-        return [dict(row) for row in fetch_recent_events(session, limit=limit)]
+        events = []
+        for row in fetch_recent_events(session, limit=limit):
+            row_dict = dict(row)
+            # Unpack Enum objects
+            if "hazard_category" in row_dict and hasattr(row_dict["hazard_category"], "value"):
+                row_dict["hazard_category"] = row_dict["hazard_category"].value
+            if "alert_level" in row_dict and hasattr(row_dict["alert_level"], "value"):
+                row_dict["alert_level"] = row_dict["alert_level"].value
+            if "eoc_status" in row_dict and hasattr(row_dict["eoc_status"], "value"):
+                row_dict["eoc_status"] = row_dict["eoc_status"].value
+            events.append(row_dict)
+        return events
 
 
 def get_event_history(
-    *,
-    event_id: int,
-    limit: int = 100,
+        *,
+        event_id: int,
+        limit: int = 100,
 ) -> list[dict[str, object]]:
     with SessionLocal() as session:
         return [
@@ -202,21 +224,24 @@ def get_event_history(
 
 
 def create_event(
-    *,
-    event_name: str,
-    hazard_type: str,
-    classification: str | None,
-    alert_code: str,
-    eoc_status: str,
-    started_at: datetime,
-    current_sitrep_number: str | None,
-    official_reference: str | None,
-    situation_overview: str | None,
-    initial_alert_reason: str,
-    authority_reference: str | None,
-    actor_user_id: int,
+        *,
+        event_name: str,
+        hazard_category: str,
+        hazard_type: str,
+        classification: str | None,
+        alert_code: str,
+        eoc_status: str,
+        listo_cpa_level: str | None = None,
+        started_at: datetime,
+        current_sitrep_number: str | None,
+        official_reference: str | None,
+        situation_overview: str | None,
+        initial_alert_reason: str,
+        authority_reference: str | None,
+        actor_user_id: int,
 ) -> int:
     cleaned_name = event_name.strip()
+    cleaned_category = hazard_category.strip()
     cleaned_hazard = hazard_type.strip()
     cleaned_alert = alert_code.strip().upper()
     cleaned_eoc = eoc_status.strip()
@@ -224,14 +249,30 @@ def create_event(
 
     if not cleaned_name:
         raise EventValidationError("Event name is required.")
+    if not cleaned_category:
+        raise EventValidationError("Hazard category is required.")
     if not cleaned_hazard:
         raise EventValidationError("Hazard type is required.")
-    if cleaned_eoc not in EOC_STATUSES:
-        raise EventValidationError("Select a valid EOC status.")
     if not cleaned_reason:
         raise EventValidationError(
             "Reason for the initial alert level is required."
         )
+
+    # Validate strict DRRM Enum mappings
+    try:
+        mapped_category = HazardCategory(cleaned_category)
+    except ValueError:
+        raise EventValidationError(f"Invalid hazard category: {cleaned_category}")
+
+    try:
+        mapped_eoc = EOCStatus(cleaned_eoc)
+    except ValueError:
+        raise EventValidationError(f"Invalid EOC status: {cleaned_eoc}")
+
+    try:
+        mapped_alert = EOCAlertLevel(cleaned_alert)
+    except ValueError:
+        raise EventValidationError(f"Invalid Alert Level: {cleaned_alert}")
 
     _validate_event_name(
         event_name=cleaned_name,
@@ -254,18 +295,21 @@ def create_event(
                     "creating another event."
                 )
 
-            alert_level = fetch_alert_level_by_code(session, cleaned_alert)
+            alert_level = fetch_alert_level_by_code(session, mapped_alert.value)
             if alert_level is None:
                 raise EventValidationError(
-                    f"Alert level '{cleaned_alert}' does not exist."
+                    f"Alert level '{mapped_alert.value}' does not exist in registry."
                 )
 
             event = DisasterEvent(
                 event_name=cleaned_name,
+                hazard_category=mapped_category,
                 hazard_type=cleaned_hazard,
                 classification=cleaned_classification,
+                listo_cpa_level=_clean_optional(listo_cpa_level),
                 current_alert_level_id=alert_level.id,
-                eoc_status=cleaned_eoc,
+                alert_level=mapped_alert,
+                eoc_status=mapped_eoc,
                 current_sitrep_number=_clean_optional(current_sitrep_number),
                 official_reference=_clean_optional(official_reference),
                 situation_overview=_clean_optional(situation_overview),
@@ -317,16 +361,16 @@ def create_event(
 
 
 def update_event_details(
-    *,
-    event_id: int,
-    event_name: str,
-    classification: str | None,
-    current_sitrep_number: str | None,
-    official_reference: str | None,
-    situation_overview: str | None,
-    reason: str,
-    authority_reference: str | None,
-    actor_user_id: int,
+        *,
+        event_id: int,
+        event_name: str,
+        classification: str | None,
+        current_sitrep_number: str | None,
+        official_reference: str | None,
+        situation_overview: str | None,
+        reason: str,
+        authority_reference: str | None,
+        actor_user_id: int,
 ) -> None:
     cleaned_name = event_name.strip()
     cleaned_reason = reason.strip()
@@ -397,13 +441,13 @@ def update_event_details(
 
 
 def change_event_alert(
-    *,
-    event_id: int,
-    new_alert_code: str,
-    effective_at: datetime,
-    reason: str,
-    authority_reference: str | None,
-    actor_user_id: int,
+        *,
+        event_id: int,
+        new_alert_code: str,
+        effective_at: datetime,
+        reason: str,
+        authority_reference: str | None,
+        actor_user_id: int,
 ) -> None:
     cleaned_reason = reason.strip()
 
@@ -414,6 +458,11 @@ def change_event_alert(
         effective_at,
         "Alert effective date and time",
     )
+
+    try:
+        mapped_alert = EOCAlertLevel(new_alert_code.strip().upper())
+    except ValueError:
+        raise EventValidationError(f"Invalid strict Alert Level Enum: {new_alert_code}")
 
     with session_scope() as session:
         actor = _require_manager(session, user_id=actor_user_id)
@@ -428,7 +477,7 @@ def change_event_alert(
 
         new_level = fetch_alert_level_by_code(
             session,
-            new_alert_code.strip().upper(),
+            mapped_alert.value,
         )
 
         if new_level is None:
@@ -457,6 +506,7 @@ def change_event_alert(
         )
 
         event.current_alert_level_id = new_level.id
+        event.alert_level = mapped_alert
 
         session.add(
             AlertLevelHistory(
@@ -488,22 +538,25 @@ def change_event_alert(
 
 
 def change_eoc_status(
-    *,
-    event_id: int,
-    new_status: str,
-    reason: str,
-    authority_reference: str | None,
-    actor_user_id: int,
+        *,
+        event_id: int,
+        new_status: str,
+        reason: str,
+        authority_reference: str | None,
+        actor_user_id: int,
 ) -> None:
     cleaned_status = new_status.strip()
     cleaned_reason = reason.strip()
 
-    if cleaned_status not in EOC_STATUSES:
-        raise EventValidationError("Select a valid EOC status.")
     if not cleaned_reason:
         raise EventValidationError(
             "Reason for the EOC change is required."
         )
+
+    try:
+        mapped_eoc = EOCStatus(cleaned_status)
+    except ValueError:
+        raise EventValidationError(f"Invalid EOC status Enum: {cleaned_status}")
 
     now = datetime.now(MANILA_TIMEZONE)
 
@@ -518,13 +571,13 @@ def change_eoc_status(
         if event is None or not event.is_active:
             raise EventStateError("The event is not active.")
 
-        if event.eoc_status == cleaned_status:
+        if event.eoc_status == mapped_eoc:
             raise EventValidationError(
                 "The selected EOC status is already in effect."
             )
 
-        old_status = event.eoc_status
-        event.eoc_status = cleaned_status
+        old_status = event.eoc_status.value if hasattr(event.eoc_status, "value") else str(event.eoc_status)
+        event.eoc_status = mapped_eoc
 
         _add_history(
             session,
@@ -532,7 +585,7 @@ def change_eoc_status(
             change_type="EOC Change",
             field_name="eoc_status",
             previous_value=old_status,
-            new_value=cleaned_status,
+            new_value=mapped_eoc.value,
             reason=cleaned_reason,
             authority_reference=authority_reference,
             actor=actor,
@@ -543,12 +596,12 @@ def change_eoc_status(
 
 
 def close_event(
-    *,
-    event_id: int,
-    ended_at: datetime,
-    reason: str,
-    authority_reference: str | None,
-    actor_user_id: int,
+        *,
+        event_id: int,
+        ended_at: datetime,
+        reason: str,
+        authority_reference: str | None,
+        actor_user_id: int,
 ) -> None:
     cleaned_reason = reason.strip()
 
@@ -578,17 +631,19 @@ def close_event(
                 "Event end time cannot be earlier than its start time."
             )
 
-        if event.eoc_status != "Stand Down":
-            old_status = event.eoc_status
-            event.eoc_status = "Stand Down"
+        old_eoc_value = event.eoc_status.value if hasattr(event.eoc_status, "value") else str(event.eoc_status)
+
+        # Standard practice: Demote to Monitoring upon closure if active
+        if old_eoc_value != EOCStatus.MONITORING.value:
+            event.eoc_status = EOCStatus.MONITORING
 
             _add_history(
                 session,
                 event_id=event.id,
                 change_type="EOC Change",
                 field_name="eoc_status",
-                previous_value=old_status,
-                new_value="Stand Down",
+                previous_value=old_eoc_value,
+                new_value=EOCStatus.MONITORING.value,
                 reason=cleaned_reason,
                 authority_reference=authority_reference,
                 actor=actor,
@@ -615,11 +670,11 @@ def close_event(
 
 
 def reopen_event(
-    *,
-    event_id: int,
-    reason: str,
-    authority_reference: str | None,
-    actor_user_id: int,
+        *,
+        event_id: int,
+        reason: str,
+        authority_reference: str | None,
+        actor_user_id: int,
 ) -> None:
     cleaned_reason = reason.strip()
 
@@ -659,10 +714,11 @@ def reopen_event(
                     "The selected event is already active."
                 )
 
-            old_eoc = event.eoc_status
+            old_eoc_value = event.eoc_status.value if hasattr(event.eoc_status, "value") else str(event.eoc_status)
+
             event.is_active = True
             event.ended_at = None
-            event.eoc_status = "Monitoring"
+            event.eoc_status = EOCStatus.MONITORING
 
             _add_history(
                 session,
@@ -677,14 +733,14 @@ def reopen_event(
                 effective_at=now,
             )
 
-            if old_eoc != "Monitoring":
+            if old_eoc_value != EOCStatus.MONITORING.value:
                 _add_history(
                     session,
                     event_id=event.id,
                     change_type="EOC Change",
                     field_name="eoc_status",
-                    previous_value=old_eoc,
-                    new_value="Monitoring",
+                    previous_value=old_eoc_value,
+                    new_value=EOCStatus.MONITORING.value,
                     reason=cleaned_reason,
                     authority_reference=authority_reference,
                     actor=actor,

@@ -5,7 +5,8 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from config.access_control import PERMISSION_MANAGE_EVENTS, ROLE_ADMINISTRATOR
-from config.constants import EOC_STATUSES, HAZARD_TYPES, TROPICAL_CYCLONE_CLASSIFICATIONS
+from config.constants import EOC_STATUSES, TROPICAL_CYCLONE_CLASSIFICATIONS
+from database.models import HazardCategory, EOCAlertLevel
 from services.event_service import (
     ActiveEventAlreadyExistsError, EventAuthorizationError, EventDataIntegrityError,
     EventServiceError, EventStateError, EventValidationError, change_eoc_status,
@@ -18,14 +19,17 @@ from utils.formatting import (
     format_datetime, format_age, format_report_age, format_table_age,
     display_event_name, display_sitrep, counted_label
 )
+
 # --- SETUP & CONSTANTS ---
 current_user = require_permission(PERMISSION_MANAGE_EVENTS)
 MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 
+HAZARD_CATEGORIES = [e.value for e in HazardCategory]
+ALERT_LEVELS = [e.value for e in EOCAlertLevel]
+LISTO_LEVELS = ["Not Applicable", "Alpha", "Bravo", "Charlie"]
+
 
 # --- HELPER FUNCTIONS ---
-
-
 
 def combine_manila(date_value: Any, time_value: Any) -> datetime:
     return datetime.combine(date_value, time_value).replace(tzinfo=MANILA_TIMEZONE)
@@ -37,8 +41,7 @@ def show_service_error(error: Exception) -> None:
 
 # --- RENDERER FUNCTIONS ---
 
-def render_no_active_event_tabs(alert_labels: list[str], alert_label_to_code: dict[str, str],
-                                recent_events: list[dict[str, Any]], now: datetime) -> None:
+def render_no_active_event_tabs(recent_events: list[dict[str, Any]], now: datetime) -> None:
     create_tab, reopen_tab = st.tabs(("Create New Event", "Reopen Closed Event"))
 
     with create_tab:
@@ -46,14 +49,32 @@ def render_no_active_event_tabs(alert_labels: list[str], alert_label_to_code: di
         event_name = st.text_input("Event name *", placeholder="Example: Luis",
                                    help="For a named tropical cyclone, enter the name only. Its current classification is stored separately.",
                                    key="new_event_name")
-        hazard_type = st.selectbox("Hazard type *", options=HAZARD_TYPES, key="new_event_hazard")
-        classification = None
-        if hazard_type == "Tropical Cyclone":
-            classification = st.selectbox("Current tropical-cyclone classification *",
-                                          options=TROPICAL_CYCLONE_CLASSIFICATIONS, key="new_event_classification")
 
-        selected_alert_label = st.selectbox("Initial alert level *", options=alert_labels, key="new_event_alert")
-        eoc_status = st.selectbox("EOC status *", options=EOC_STATUSES, key="new_event_eoc")
+        col1, col2 = st.columns(2)
+        with col1:
+            hazard_category = st.selectbox("Hazard Category *", options=HAZARD_CATEGORIES, key="new_event_category")
+        with col2:
+            hazard_type = st.text_input("Specific Hazard Type *", placeholder="e.g., Tropical Cyclone, Earthquake",
+                                        key="new_event_hazard")
+
+        classification = None
+        listo_cpa_level = None
+
+        if hazard_category == HazardCategory.HYDROMETEOROLOGICAL.value:
+            st.caption("Hydrometeorological Tracking")
+            hm_col1, hm_col2 = st.columns(2)
+            with hm_col1:
+                classification = st.selectbox("Classification",
+                                              options=["Not Applicable"] + TROPICAL_CYCLONE_CLASSIFICATIONS,
+                                              key="new_event_classification")
+            with hm_col2:
+                listo_cpa_level = st.selectbox("Operation L!STO CPA", options=LISTO_LEVELS, key="new_event_listo")
+
+        col3, col4 = st.columns(2)
+        with col3:
+            selected_alert_label = st.selectbox("Initial alert level *", options=ALERT_LEVELS, key="new_event_alert")
+        with col4:
+            eoc_status = st.selectbox("EOC status *", options=EOC_STATUSES, key="new_event_eoc")
 
         time_columns = st.columns(2)
         with time_columns[0]:
@@ -73,9 +94,14 @@ def render_no_active_event_tabs(alert_labels: list[str], alert_label_to_code: di
         if st.button("Create Active Event", type="primary", width="stretch", disabled=not confirmation,
                      key="new_event_submit"):
             try:
+                # Clean up "Not Applicable" selections before submitting to database
+                final_classification = classification if classification != "Not Applicable" else None
+                final_listo = listo_cpa_level if listo_cpa_level != "Not Applicable" else None
+
                 event_id = create_event(
-                    event_name=event_name, hazard_type=hazard_type, classification=classification,
-                    alert_code=alert_label_to_code[selected_alert_label], eoc_status=eoc_status,
+                    event_name=event_name, hazard_category=hazard_category, hazard_type=hazard_type,
+                    classification=final_classification, alert_code=selected_alert_label,
+                    eoc_status=eoc_status, listo_cpa_level=final_listo,
                     started_at=combine_manila(start_date, start_time), current_sitrep_number=sitrep,
                     official_reference=official_reference, situation_overview=overview,
                     initial_alert_reason=initial_reason, authority_reference=authority, actor_user_id=current_user.id,
@@ -114,12 +140,15 @@ def render_no_active_event_tabs(alert_labels: list[str], alert_label_to_code: di
                         st.rerun()
 
 
-def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[str, Any]], alert_labels: list[str],
-                             alert_label_to_code: dict[str, str], now: datetime) -> None:
+def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[str, Any]], now: datetime) -> None:
     overview_tab, details_tab, operations_tab, history_tab, close_tab = st.tabs(
         ("Overview", "Update Details", "Alert & EOC", "History", "Close Event"))
 
     with overview_tab:
+        st.write("**Hazard Category:**", str(active_event.get("hazard_category", "Not set")))
+        st.write("**Specific Hazard:**", str(active_event.get("hazard_type", "Not set")))
+        if active_event.get("listo_cpa_level"):
+            st.write("**Operation L!STO:**", str(active_event["listo_cpa_level"]))
         st.write("**SitRep:**", active_event["current_sitrep_number"] or "Not provided")
         st.write("**Official reference:**", active_event["official_reference"] or "Not provided")
         st.write("**Situation overview:**", active_event["situation_overview"] or "No overview entered.")
@@ -128,8 +157,9 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
 
     with details_tab:
         edit_name = st.text_input("Event name *", value=str(active_event["event_name"]), key="edit_event_name")
+
         edit_classification = active_event.get("classification")
-        if active_event["hazard_type"] == "Tropical Cyclone":
+        if active_event.get("hazard_category") == HazardCategory.HYDROMETEOROLOGICAL.value:
             current_classification = active_event.get("classification")
             default_index = TROPICAL_CYCLONE_CLASSIFICATIONS.index(
                 current_classification) if current_classification in TROPICAL_CYCLONE_CLASSIFICATIONS else 0
@@ -161,9 +191,9 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
 
     with operations_tab:
         st.markdown("### Change alert level")
-        current_alert_index = next(
-            (i for i, label in enumerate(alert_labels) if alert_label_to_code[label] == active_event["alert_code"]), 0)
-        new_alert_label = st.selectbox("New alert level", options=alert_labels, index=current_alert_index,
+        current_alert_index = ALERT_LEVELS.index(str(active_event["alert_level"])) if str(
+            active_event.get("alert_level")) in ALERT_LEVELS else 0
+        new_alert_label = st.selectbox("New alert level", options=ALERT_LEVELS, index=current_alert_index,
                                        key="change_alert_label")
 
         alert_time_columns = st.columns(2)
@@ -180,7 +210,7 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
         if st.button("Apply Alert Change", type="primary", key="alert_submit"):
             try:
                 change_event_alert(
-                    event_id=int(active_event["id"]), new_alert_code=alert_label_to_code[new_alert_label],
+                    event_id=int(active_event["id"]), new_alert_code=new_alert_label,
                     effective_at=combine_manila(alert_date, alert_time), reason=alert_reason,
                     authority_reference=alert_reference, actor_user_id=current_user.id,
                 )
@@ -192,7 +222,8 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
 
         st.divider()
         st.markdown("### Change EOC status")
-        current_eoc_index = EOC_STATUSES.index(str(active_event["eoc_status"]))
+        current_eoc_index = EOC_STATUSES.index(str(active_event["eoc_status"])) if str(
+            active_event.get("eoc_status")) in EOC_STATUSES else 0
         new_eoc = st.selectbox("New EOC status", options=EOC_STATUSES, index=current_eoc_index, key="change_eoc_status")
         eoc_reason = st.text_area("Reason for EOC-status change *", key="change_eoc_reason")
         eoc_reference = st.text_input("EOC authority/reference", key="change_eoc_reference")
@@ -257,7 +288,6 @@ success_message = st.session_state.pop("event_control_success", None)
 if success_message: st.success(success_message)
 
 try:
-    alert_levels = list_alert_levels()
     active_event = get_active_event_summary()
     recent_events = list_recent_events(limit=20)
 except EventServiceError as error:
@@ -267,22 +297,16 @@ except Exception:
     st.error("Event Control could not retrieve operational data.")
     st.stop()
 
-if not alert_levels:
-    st.error("No alert levels exist. Run the master-data seed script.")
-    st.stop()
-
-alert_labels = [f"{row['name']} — {row['code']}" for row in alert_levels]
-alert_label_to_code = {f"{row['name']} — {row['code']}": str(row["code"]) for row in alert_levels}
 now = datetime.now(MANILA_TIMEZONE)
 
 if active_event is None:
-    render_no_active_event_tabs(alert_labels, alert_label_to_code, recent_events, now)
+    render_no_active_event_tabs(recent_events, now)
     st.stop()
 
 render_event_control_strip(
     event_name=display_event_name(active_event), hazard_type=str(active_event["hazard_type"]),
     classification=str(active_event.get("classification") or "Not applicable"),
-    alert_code=str(active_event["alert_code"]), eoc_status=str(active_event["eoc_status"]),
+    alert_code=str(active_event["alert_level"]), eoc_status=str(active_event["eoc_status"]),
     sitrep=str(active_event["current_sitrep_number"] or "Not provided"),
     started_at=format_datetime(active_event["started_at"]),
     official_reference=str(active_event["official_reference"]) if active_event["official_reference"] else None,
@@ -293,4 +317,4 @@ try:
 except EventServiceError:
     history = []
 
-render_active_event_tabs(active_event, history, alert_labels, alert_label_to_code, now)
+render_active_event_tabs(active_event, history, now)
