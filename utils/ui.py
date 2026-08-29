@@ -305,7 +305,6 @@ def render_operational_page_header(
         """
     )
 
-
 def render_operational_event_strip(
     *,
     event_name: str,
@@ -321,6 +320,10 @@ def render_operational_event_strip(
     Long event names, SitRep labels, references, and status values wrap
     normally. No operational identifier is intentionally ellipsized.
     """
+    # Clean the raw database text for the Dashboard UI
+    alert_code = str(alert_code).replace(" ALERT", "").strip()
+    eoc_status = str(eoc_status).replace("EOCStatus.", "").replace("EOC_STATUS.", "").title()
+
     reference_html = ""
 
     if (
