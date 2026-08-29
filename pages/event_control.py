@@ -99,12 +99,20 @@ def render_no_active_event_tabs(recent_events: list[dict[str, Any]], now: dateti
                 final_listo = listo_cpa_level if listo_cpa_level != "Not Applicable" else None
 
                 event_id = create_event(
-                    event_name=event_name, hazard_category=hazard_category, hazard_type=hazard_type,
-                    classification=final_classification, alert_code=str(active_event.get("alert_level", "WHITE ALERT")),
-                    eoc_status=str(active_event.get("eoc_status", "Monitoring")), listo_cpa_level=final_listo,
-                    started_at=combine_manila(start_date, start_time), current_sitrep_number=sitrep,
-                    official_reference=official_reference, situation_overview=overview,
-                    initial_alert_reason=initial_reason, authority_reference=authority, actor_user_id=current_user.id,
+                    event_name=event_name,
+                    hazard_category=hazard_category,
+                    hazard_type=hazard_type,
+                    classification=final_classification,
+                    alert_code=selected_alert_label,  # <-- Fixed
+                    eoc_status=eoc_status,  # <-- Fixed
+                    listo_cpa_level=final_listo,
+                    started_at=combine_manila(start_date, start_time),
+                    current_sitrep_number=sitrep,
+                    official_reference=official_reference,
+                    situation_overview=overview,
+                    initial_alert_reason=initial_reason,
+                    authority_reference=authority,
+                    actor_user_id=current_user.id,
                 )
             except (EventValidationError, EventAuthorizationError, EventDataIntegrityError,
                     ActiveEventAlreadyExistsError, EventServiceError) as error:
@@ -304,13 +312,14 @@ if active_event is None:
     st.stop()
 
 render_event_control_strip(
-    event_name=display_event_name(active_event), hazard_type=str(active_event["hazard_type"]),
-    classification = st.selectbox("Classification",
-    options=["Not Applicable"] + list(TROPICAL_CYCLONE_CLASSIFICATIONS), key="new_event_classification"),
-    alert_code=str(active_event["alert_level"]), eoc_status=str(active_event["eoc_status"]),
+    event_name=display_event_name(active_event),
+    hazard_type=str(active_event["hazard_type"]),
+    classification=str(active_event.get("classification") or "Not Applicable"),
+    alert_code=str(active_event.get("alert_level", "WHITE")).replace(" ALERT", ""),
+    eoc_status=str(active_event.get("eoc_status", "Monitoring")),
     sitrep=str(active_event["current_sitrep_number"] or "Not provided"),
     started_at=format_datetime(active_event["started_at"]),
-    official_reference=str(active_event["official_reference"]) if active_event["official_reference"] else None,
+    official_reference=str(active_event["official_reference"]) if active_event.get("official_reference") else None,
 )
 
 try:
