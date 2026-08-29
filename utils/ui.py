@@ -380,6 +380,8 @@ def render_event_control_strip(
     started_at: str,
     official_reference: str | None = None,
 ) -> None:
+    alert_code = str(alert_code).replace(" ALERT", "").strip()
+    eoc_status = str(eoc_status).replace("EOCStatus.", "").replace("EOC_STATUS.", "").title()
     """
     Compact Event Control identity strip with full wrapping values.
     """
