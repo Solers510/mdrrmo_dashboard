@@ -94,17 +94,24 @@ def render_no_active_event_tabs(recent_events: list[dict[str, Any]], now: dateti
         if st.button("Create Active Event", type="primary", width="stretch", disabled=not confirmation,
                      key="new_event_submit"):
             try:
-                # Clean up "Not Applicable" selections before submitting to database
                 final_classification = classification if classification != "Not Applicable" else None
                 final_listo = listo_cpa_level if listo_cpa_level != "Not Applicable" else None
 
                 event_id = create_event(
-                    event_name=event_name, hazard_category=hazard_category, hazard_type=hazard_type,
-                    classification=final_classification, alert_code=str(active_event.get("alert_level", "WHITE ALERT")),
-                    eoc_status=str(active_event.get("eoc_status", "Monitoring")), listo_cpa_level=final_listo,
-                    started_at=combine_manila(start_date, start_time), current_sitrep_number=sitrep,
-                    official_reference=official_reference, situation_overview=overview,
-                    initial_alert_reason=initial_reason, authority_reference=authority, actor_user_id=current_user.id,
+                    event_name=event_name,
+                    hazard_category=hazard_category,
+                    hazard_type=hazard_type,
+                    classification=final_classification,
+                    alert_code=selected_alert_label,
+                    eoc_status=eoc_status,
+                    listo_cpa_level=final_listo,
+                    started_at=combine_manila(start_date, start_time),
+                    current_sitrep_number=sitrep,
+                    official_reference=official_reference,
+                    situation_overview=overview,
+                    initial_alert_reason=initial_reason,
+                    authority_reference=authority,
+                    actor_user_id=current_user.id,
                 )
             except (EventValidationError, EventAuthorizationError, EventDataIntegrityError,
                     ActiveEventAlreadyExistsError, EventServiceError) as error:
@@ -117,7 +124,7 @@ def render_no_active_event_tabs(recent_events: list[dict[str, Any]], now: dateti
         if current_user.role != ROLE_ADMINISTRATOR:
             st.info("Only an Administrator may reopen a closed event.")
         else:
-            closed_events = [row for row in recent_events if not row["is_active"]]
+            closed_events = [row for row in recent_events if not row.get("is_active")]
             if not closed_events:
                 st.info("No closed events are available to reopen.")
             else:
@@ -149,14 +156,14 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
         st.write("**Specific Hazard:**", str(active_event.get("hazard_type", "Not set")))
         if active_event.get("listo_cpa_level"):
             st.write("**Operation L!STO:**", str(active_event["listo_cpa_level"]))
-        st.write("**SitRep:**", active_event["current_sitrep_number"] or "Not provided")
-        st.write("**Official reference:**", active_event["official_reference"] or "Not provided")
-        st.write("**Situation overview:**", active_event["situation_overview"] or "No overview entered.")
+        st.write("**SitRep:**", active_event.get("current_sitrep_number") or "Not provided")
+        st.write("**Official reference:**", active_event.get("official_reference") or "Not provided")
+        st.write("**Situation overview:**", active_event.get("situation_overview") or "No overview entered.")
         st.info(
             "Event name, cyclone classification, SitRep, reference, and overview can be updated without creating a new event.")
 
     with details_tab:
-        edit_name = st.text_input("Event name *", value=str(active_event["event_name"]), key="edit_event_name")
+        edit_name = st.text_input("Event name *", value=str(active_event.get("event_name", "")), key="edit_event_name")
 
         edit_classification = active_event.get("classification")
         if active_event.get("hazard_category") == HazardCategory.HYDROMETEOROLOGICAL.value:
@@ -166,11 +173,12 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
             edit_classification = st.selectbox("Current classification *", options=TROPICAL_CYCLONE_CLASSIFICATIONS,
                                                index=default_index, key="edit_classification")
 
-        edit_sitrep = st.text_input("Current SitRep number", value=active_event["current_sitrep_number"] or "",
+        edit_sitrep = st.text_input("Current SitRep number", value=active_event.get("current_sitrep_number") or "",
                                     key="edit_sitrep")
-        edit_reference = st.text_input("Official event reference", value=active_event["official_reference"] or "",
+        edit_reference = st.text_input("Official event reference", value=active_event.get("official_reference") or "",
                                        key="edit_reference")
-        edit_overview = st.text_area("Situation overview", value=active_event["situation_overview"] or "", height=150,
+        edit_overview = st.text_area("Situation overview", value=active_event.get("situation_overview") or "",
+                                     height=150,
                                      key="edit_overview")
         edit_reason = st.text_area("Reason for change *", key="edit_reason")
         edit_authority = st.text_input("Authority or supporting reference", key="edit_authority")
@@ -191,8 +199,9 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
 
     with operations_tab:
         st.markdown("### Change alert level")
-        current_alert_index = ALERT_LEVELS.index(str(active_event["alert_level"])) if str(
-            active_event.get("alert_level")) in ALERT_LEVELS else 0
+        current_alert_code = str(active_event.get("alert_code", "WHITE ALERT"))
+        current_alert_index = ALERT_LEVELS.index(current_alert_code) if current_alert_code in ALERT_LEVELS else 0
+
         new_alert_label = st.selectbox("New alert level", options=ALERT_LEVELS, index=current_alert_index,
                                        key="change_alert_label")
 
@@ -222,7 +231,7 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
 
         st.divider()
         st.markdown("### Change EOC status")
-        current_eoc_index = EOC_STATUSES.index(str(active_event["eoc_status"])) if str(
+        current_eoc_index = EOC_STATUSES.index(str(active_event.get("eoc_status"))) if str(
             active_event.get("eoc_status")) in EOC_STATUSES else 0
         new_eoc = st.selectbox("New EOC status", options=EOC_STATUSES, index=current_eoc_index, key="change_eoc_status")
         eoc_reason = st.text_area("Reason for EOC-status change *", key="change_eoc_reason")
@@ -281,6 +290,7 @@ def render_active_event_tabs(active_event: dict[str, Any], history: list[dict[st
 
 # --- MAIN EXECUTION BLOCK ---
 
+# THIS RESTORES THE DELETED UI HEADER CSS
 render_operational_page_header(title="Event Control",
                                subtitle="Create, update, escalate, stand down, close, and audit the current disaster event.")
 
@@ -304,13 +314,14 @@ if active_event is None:
     st.stop()
 
 render_event_control_strip(
-    event_name=display_event_name(active_event), hazard_type=str(active_event["hazard_type"]),
-    classification = st.selectbox("Classification",
-    options=["Not Applicable"] + list(TROPICAL_CYCLONE_CLASSIFICATIONS), key="new_event_classification"),
-    alert_code=str(active_event["alert_level"]), eoc_status=str(active_event["eoc_status"]),
-    sitrep=str(active_event["current_sitrep_number"] or "Not provided"),
-    started_at=format_datetime(active_event["started_at"]),
-    official_reference=str(active_event["official_reference"]) if active_event["official_reference"] else None,
+    event_name=display_event_name(active_event),
+    hazard_type=str(active_event.get("hazard_type", "")),
+    classification=str(active_event.get("classification") or "Not Applicable"),
+    alert_code=str(active_event.get("alert_level", "WHITE")),
+    eoc_status=str(active_event.get("eoc_status", "Monitoring")),
+    sitrep=str(active_event.get("current_sitrep_number") or "Not provided"),
+    started_at=format_datetime(active_event.get("started_at", now)),
+    official_reference=str(active_event["official_reference"]) if active_event.get("official_reference") else None,
 )
 
 try:

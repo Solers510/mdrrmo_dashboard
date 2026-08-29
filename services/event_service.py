@@ -173,34 +173,35 @@ def get_active_event_summary() -> dict[str, object] | None:
     with SessionLocal() as session:
         rows = fetch_active_event_rows(session)
         if len(rows) > 1:
-            raise EventDataIntegrityError(
-                "More than one active disaster event exists."
-            )
+            raise EventDataIntegrityError("More than one active disaster event exists.")
         if not rows:
             return None
 
         row_dict = dict(rows[0])
 
-        # 1. Unpack strict Enums for the UI
+        # Unpack strict Enums for UI rendering
         if "hazard_category" in row_dict and hasattr(row_dict["hazard_category"], "value"):
             row_dict["hazard_category"] = row_dict["hazard_category"].value
         if "eoc_status" in row_dict and hasattr(row_dict["eoc_status"], "value"):
             row_dict["eoc_status"] = row_dict["eoc_status"].value
 
-        # 2. Translate the new foreign key ID back into the old string format
-        if "alert_level" not in row_dict and "current_alert_level_id" in row_dict:
-            levels = fetch_alert_levels(session)
-            for lvl in levels:
-                if dict(lvl)["id"] == row_dict["current_alert_level_id"]:
-                    row_dict["alert_level"] = dict(lvl)["code"]
-                    break
-            else:
-                row_dict["alert_level"] = "WHITE ALERT"
-        elif "alert_level" not in row_dict:
-            row_dict["alert_level"] = "WHITE ALERT"
+        # Synchronize Alert Levels:
+        # The database query returns 'alert_code' (e.g., "BLUE ALERT") which the Dashboard uses perfectly.
+        # Event Control looks for 'alert_level'.
+        raw_code = str(row_dict.get("alert_code", "WHITE ALERT"))
+
+        # Event Control's UI automatically appends " ALERT" to the badge.
+        # We strip it here to prevent the "BLUE ALERT ALERT" visual bug.
+        if raw_code.endswith(" ALERT"):
+            clean_name = raw_code.replace(" ALERT", "")
+        else:
+            clean_name = raw_code
+
+        # Feed the synchronized data to both UI pages
+        row_dict["alert_level"] = clean_name
+        row_dict["alert_code"] = raw_code
 
         return row_dict
-
 
 def list_recent_events(*, limit: int = 20) -> list[dict[str, object]]:
     with SessionLocal() as session:
