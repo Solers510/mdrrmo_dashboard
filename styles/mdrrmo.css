@@ -917,3 +917,39 @@
         gap: 0.55rem;
     }
 }
+/* --- PHASE 11D: LARGE EOC MONITOR & TV SCALING --- */
+@media screen and (min-width: 1440px) {
+    /* Scale main page titles */
+    .mdrrmo-page-header__title,
+    .mdrrmo-ops-page-header__title,
+    .mdrrmo-dashboard-section__title {
+        font-size: clamp(1.9rem, 2.5vw, 3.5rem) !important;
+    }
+
+    /* Scale the active event name */
+    .mdrrmo-ops-event__name {
+        font-size: clamp(1.65rem, 2.2vw, 3rem) !important;
+    }
+
+    /* Scale the operational field text (Hazard, EOC Status, etc.) */
+    .mdrrmo-ops-field__label {
+        font-size: clamp(0.62rem, 0.9vw, 1.2rem) !important;
+    }
+
+    .mdrrmo-ops-field__value {
+        font-size: clamp(0.88rem, 1.2vw, 1.8rem) !important;
+    }
+
+    /* Massively scale KPI numbers and Attention flags for TV readability */
+    .mdrrmo-kpi-card__value,
+    .mdrrmo-attention-card__value {
+        font-size: clamp(1.42rem, 3.5vw, 5rem) !important;
+    }
+
+    /* Scale status badges and pills */
+    .mdrrmo-status,
+    .mdrrmo-ops-alert {
+        font-size: clamp(0.75rem, 1vw, 1.5rem) !important;
+        padding: 0.4vw 0.8vw !important;
+    }
+}
