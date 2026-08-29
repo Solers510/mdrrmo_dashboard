@@ -170,34 +170,32 @@ def list_alert_levels() -> list[dict[str, object]]:
 
 
 def get_active_event_summary() -> dict[str, object] | None:
+    from database.models import DisasterEvent, AlertLevel
+
     with SessionLocal() as session:
         rows = fetch_active_event_rows(session)
         if len(rows) > 1:
-            raise EventDataIntegrityError(
-                "More than one active disaster event exists."
-            )
+            raise EventDataIntegrityError("More than one active disaster event exists.")
         if not rows:
             return None
 
         row_dict = dict(rows[0])
 
-        # 1. Unpack strict Enums for the UI
+        # Unpack Enums for UI rendering
         if "hazard_category" in row_dict and hasattr(row_dict["hazard_category"], "value"):
             row_dict["hazard_category"] = row_dict["hazard_category"].value
         if "eoc_status" in row_dict and hasattr(row_dict["eoc_status"], "value"):
             row_dict["eoc_status"] = row_dict["eoc_status"].value
 
-        # 2. Translate the new foreign key ID back into the old string format
-        if "alert_level" not in row_dict and "current_alert_level_id" in row_dict:
-            levels = fetch_alert_levels(session)
-            for lvl in levels:
-                if dict(lvl)["id"] == row_dict["current_alert_level_id"]:
-                    row_dict["alert_level"] = dict(lvl)["code"]
-                    break
-            else:
-                row_dict["alert_level"] = "WHITE ALERT"
-        elif "alert_level" not in row_dict:
-            row_dict["alert_level"] = "WHITE ALERT"
+        # Dynamically fetch the correct Alert Level to fix the UI discrepancy
+        row_dict["alert_level"] = "WHITE"  # Default fallback
+        if "id" in row_dict:
+            event_obj = session.get(DisasterEvent, row_dict["id"])
+            if event_obj and event_obj.current_alert_level_id:
+                alert_obj = session.get(AlertLevel, event_obj.current_alert_level_id)
+                if alert_obj:
+                    # Use the raw name (e.g., "BLUE") so the UI renders "BLUE ALERT" instead of "BLUE ALERT ALERT"
+                    row_dict["alert_level"] = alert_obj.name.upper()
 
         return row_dict
 
