@@ -180,10 +180,24 @@ def get_active_event_summary() -> dict[str, object] | None:
             return None
 
         row_dict = dict(rows[0])
+
+        # 1. Unpack strict Enums for the UI
         if "hazard_category" in row_dict and hasattr(row_dict["hazard_category"], "value"):
             row_dict["hazard_category"] = row_dict["hazard_category"].value
         if "eoc_status" in row_dict and hasattr(row_dict["eoc_status"], "value"):
             row_dict["eoc_status"] = row_dict["eoc_status"].value
+
+        # 2. Translate the new foreign key ID back into the old string format
+        if "alert_level" not in row_dict and "current_alert_level_id" in row_dict:
+            levels = fetch_alert_levels(session)
+            for lvl in levels:
+                if dict(lvl)["id"] == row_dict["current_alert_level_id"]:
+                    row_dict["alert_level"] = dict(lvl)["code"]
+                    break
+            else:
+                row_dict["alert_level"] = "WHITE ALERT"
+        elif "alert_level" not in row_dict:
+            row_dict["alert_level"] = "WHITE ALERT"
 
         return row_dict
 

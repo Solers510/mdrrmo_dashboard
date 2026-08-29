@@ -100,8 +100,8 @@ def render_no_active_event_tabs(recent_events: list[dict[str, Any]], now: dateti
 
                 event_id = create_event(
                     event_name=event_name, hazard_category=hazard_category, hazard_type=hazard_type,
-                    classification=final_classification, alert_code=selected_alert_label,
-                    eoc_status=eoc_status, listo_cpa_level=final_listo,
+                    classification=final_classification, alert_code=str(active_event.get("alert_level", "WHITE ALERT")),
+                    eoc_status=str(active_event.get("eoc_status", "Monitoring")), listo_cpa_level=final_listo,
                     started_at=combine_manila(start_date, start_time), current_sitrep_number=sitrep,
                     official_reference=official_reference, situation_overview=overview,
                     initial_alert_reason=initial_reason, authority_reference=authority, actor_user_id=current_user.id,
