@@ -628,20 +628,20 @@ def render_kpi_grid(
     )
 
 def render_current_evacuation_picture(
-    *,
-    affected_barangays: int,
-    affected_families: int,
-    affected_individuals: int,
-    operational_centers: int,
-    inside_ec_families: int,
-    inside_ec_individuals: int,
-    outside_ec_families: int,
-    outside_ec_individuals: int,
-    non_displaced_families: int = 0,
-    non_displaced_individuals: int = 0,
-    mode_label: str = "Official Validated",
-    barangay_as_of: str = "Not available",
-    center_as_of: str = "Not available",
+        *,
+        affected_barangays: int,
+        affected_families: int,
+        affected_individuals: int,
+        operational_centers: int,
+        inside_ec_families: int,
+        inside_ec_individuals: int,
+        outside_ec_families: int,
+        outside_ec_individuals: int,
+        non_displaced_families: int = 0,
+        non_displaced_individuals: int = 0,
+        mode_label: str = "Official Validated",
+        barangay_as_of: str = "Not available",
+        center_as_of: str = "Not available",
 ) -> None:
     total_evacuated_families = inside_ec_families + outside_ec_families
     total_evacuated_individuals = inside_ec_individuals + outside_ec_individuals
@@ -656,6 +656,70 @@ def render_current_evacuation_picture(
             Center reports as of {escape(center_as_of)}
           </span>
         </div>
+        """
+    )
+
+    # Top KPI Container - Total Affected Population
+    st.markdown(f"""
+    <div style="border: 1px solid #DDE3EF; border-radius: 8px; padding: 16px; background-color: #FFFFFF; margin-bottom: 12px;">
+        <div style="font-weight: 600; text-align: center; margin-bottom: 4px; color: #1A2540; font-size: clamp(16px, 1.8vw, 28px);">Total Reported Affected Population</div>
+        <div style="font-size: clamp(12px, 1vw, 18px); text-align: center; color: #6B7A99; margin-bottom: 12px;">
+          Includes evacuees and affected residents who have not evacuated. Affected does not automatically mean injured, homeless, or staying in an evacuation center.
+        </div>
+        <div style="display: flex; justify-content: space-around; text-align: center;">
+            <div><small style="color: #6B7A99; font-weight: 600; font-size: clamp(11px, 1vw, 18px);">AFFECTED BARANGAYS</small><div style="font-size: clamp(28px, 4vw, 64px); font-weight: 700; color: #1549A8;">{affected_barangays:,}</div></div>
+            <div><small style="color: #6B7A99; font-weight: 600; font-size: clamp(11px, 1vw, 18px);">AFFECTED FAMILIES</small><div style="font-size: clamp(28px, 4vw, 64px); font-weight: 700; color: #1549A8;">{affected_families:,}</div></div>
+            <div><small style="color: #6B7A99; font-weight: 600; font-size: clamp(11px, 1vw, 18px);">AFFECTED INDIVIDUALS</small><div style="font-size: clamp(28px, 4vw, 64px); font-weight: 700; color: #1549A8;">{affected_individuals:,}</div></div>
+        </div>
+        <div style="background-color: #EEF2F8; border-radius: 4px; padding: 6px; text-align: center; margin-top: 12px; font-size: clamp(13px, 1.2vw, 22px); font-weight: 600; color: #0D2461;">
+            CURRENTLY EVACUATED: {total_evacuated_families:,} families &middot; {total_evacuated_individuals:,} individuals
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Symmetrical 3-Column Breakdown (Inside EC | Outside EC | Non-Displaced)
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown(f"""
+        <div style="border: 1px solid #DDE3EF; border-top: 3px solid #0F7E4A; border-radius: 6px; padding: 12px; background-color: #FFFFFF; text-align: center; height: 100%;">
+            <div style="font-weight: 600; color: #1A2540; margin-bottom: 8px; font-size: clamp(15px, 1.5vw, 24px);">Inside Evacuation Centers</div>
+            <div style="display: flex; justify-content: space-around;">
+                <div><small style="color: #6B7A99; font-size: clamp(11px, 1vw, 16px);">CENTERS</small><div style="font-weight: 700; font-size: clamp(22px, 2.5vw, 48px);">{operational_centers:,}</div></div>
+                <div><small style="color: #6B7A99; font-size: clamp(11px, 1vw, 16px);">FAMILIES</small><div style="font-weight: 700; font-size: clamp(22px, 2.5vw, 48px);">{inside_ec_families:,}</div></div>
+                <div><small style="color: #6B7A99; font-size: clamp(11px, 1vw, 16px);">INDIVIDUALS</small><div style="font-weight: 700; font-size: clamp(22px, 2.5vw, 48px);">{inside_ec_individuals:,}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(f"""
+        <div style="border: 1px solid #DDE3EF; border-top: 3px solid #B45309; border-radius: 6px; padding: 12px; background-color: #FFFFFF; text-align: center; height: 100%;">
+            <div style="font-weight: 600; color: #1A2540; margin-bottom: 8px; font-size: clamp(15px, 1.5vw, 24px);">Outside Evacuation Centers</div>
+            <div style="display: flex; justify-content: space-around;">
+                <div><small style="color: #6B7A99; font-size: clamp(11px, 1vw, 16px);">FAMILIES</small><div style="font-weight: 700; font-size: clamp(22px, 2.5vw, 48px);">{outside_ec_families:,}</div></div>
+                <div><small style="color: #6B7A99; font-size: clamp(11px, 1vw, 16px);">INDIVIDUALS</small><div style="font-weight: 700; font-size: clamp(22px, 2.5vw, 48px);">{outside_ec_individuals:,}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown(f"""
+        <div style="border: 1px solid #DDE3EF; border-top: 3px solid #1549A8; border-radius: 6px; padding: 12px; background-color: #FFFFFF; text-align: center; height: 100%;">
+            <div style="font-weight: 600; color: #1A2540; margin-bottom: 8px; font-size: clamp(15px, 1.5vw, 24px);">Non-Displaced (Home-Based)</div>
+            <div style="display: flex; justify-content: space-around;">
+                <div><small style="color: #6B7A99; font-size: clamp(11px, 1vw, 16px);">FAMILIES</small><div style="font-weight: 700; font-size: clamp(22px, 2.5vw, 48px);">{non_displaced_families:,}</div></div>
+                <div><small style="color: #6B7A99; font-size: clamp(11px, 1vw, 16px);">INDIVIDUALS</small><div style="font-weight: 700; font-size: clamp(22px, 2.5vw, 48px);">{non_displaced_individuals:,}</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.html(
+        """
+        <p class="mdrrmo-evacuation-picture__source" style="margin-top: 12px; font-size: clamp(11px, 1vw, 16px); color: #6B7A99; text-align: center;">
+          Population figures: current barangay reports &middot;
+          Operational-center count: current evacuation-center reports
+        </p>
         """
     )
 
